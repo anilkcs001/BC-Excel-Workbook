@@ -5,7 +5,8 @@ codeunit 89003 "AK Workbook Write Row"
     //
     // Modify: find the record by its primary key, stop if someone changed it after the sheet was loaded
     //         (SystemModifiedAt), Validate each changed field in sheet order, then Modify(true).
-    // Insert: Init, Validate the key fields that were typed, Insert(true) (number series and OnInsert run),
+    // Insert: Init, Validate the key fields that were typed, give line tables the next Line No. and
+    //         journal lines the page's SetUpNewLine defaults, Insert(true) (number series and OnInsert run),
     //         then Validate the other fields and Modify(true).
     // Validate runs the same OnValidate code as the standard page, so lookups, blocked checks and
     // dependent fields behave the same way.
@@ -103,9 +104,71 @@ codeunit 89003 "AK Workbook Write Row"
                     FldRef := RecRef.Field(KeyFieldNos.Get(Index));
                     AssignValue(FldRef, KeyValues.Get(Index), true);
                 end;
+        SetNextLineNo(KeyValues);
+        SetUpNewLine();
         RecRef.Insert(true);
         ValidateValues(true);
         RecRef.Modify(true);
+    end;
+
+    /// <summary>
+    /// Line tables (journal, sales and purchase lines): when the last key field is an Integer (Line No.) and
+    /// the sheet left it empty, use the last line no. with the same other key values + 10000, like the page does.
+    /// </summary>
+    local procedure SetNextLineNo(KeyValues: List of [Text])
+    var
+        LastRef: RecordRef;
+        FldRef: FieldRef;
+        LastIndex: Integer;
+        Index: Integer;
+        LastLineNo: Integer;
+    begin
+        LastIndex := KeyFieldNos.Count();
+        if LastIndex < 2 then
+            exit;
+        FldRef := RecRef.Field(KeyFieldNos.Get(LastIndex));
+        if FldRef.Type() <> FieldType::Integer then
+            exit;
+        if LastIndex <= KeyValues.Count() then
+            if KeyValues.Get(LastIndex) <> '' then
+                exit;
+        LastRef.Open(TableNo);
+        for Index := 1 to LastIndex - 1 do
+            LastRef.Field(KeyFieldNos.Get(Index)).SetRange(RecRef.Field(KeyFieldNos.Get(Index)).Value());
+        LastLineNo := 0;
+        if LastRef.FindLast() then
+            LastLineNo := LastRef.Field(KeyFieldNos.Get(LastIndex)).Value();
+        FldRef.Value := LastLineNo + 10000;
+    end;
+
+    /// <summary>Journal lines get the same defaults as a new line on the journal page (posting date, document no., source code...).</summary>
+    local procedure SetUpNewLine()
+    var
+        GenJnlLine: Record "Gen. Journal Line";
+        LastGenJnlLine: Record "Gen. Journal Line";
+        ItemJnlLine: Record "Item Journal Line";
+        LastItemJnlLine: Record "Item Journal Line";
+    begin
+        case TableNo of
+            Database::"Gen. Journal Line":
+                begin
+                    RecRef.SetTable(GenJnlLine);
+                    LastGenJnlLine.SetRange("Journal Template Name", GenJnlLine."Journal Template Name");
+                    LastGenJnlLine.SetRange("Journal Batch Name", GenJnlLine."Journal Batch Name");
+                    if LastGenJnlLine.FindLast() then;
+                    GenJnlLine.SetUpNewLine(LastGenJnlLine, 0, true);
+                    RecRef.GetTable(GenJnlLine);
+                end;
+            Database::"Item Journal Line":
+                begin
+                    RecRef.SetTable(ItemJnlLine);
+                    LastItemJnlLine.SetRange("Journal Template Name", ItemJnlLine."Journal Template Name");
+                    LastItemJnlLine.SetRange("Journal Batch Name", ItemJnlLine."Journal Batch Name");
+                    if LastItemJnlLine.FindLast() then;
+                    ItemJnlLine.SetUpNewLine(LastItemJnlLine);
+                    RecRef.GetTable(ItemJnlLine);
+                end;
+        end;
     end;
 
     local procedure CheckVersion()

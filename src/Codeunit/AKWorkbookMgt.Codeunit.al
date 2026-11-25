@@ -21,10 +21,18 @@ codeunit 89001 "AK Workbook Mgt"
     end;
 
     procedure GetEditorConfigJson(WorkbookCode: Code[20]): Text
+    begin
+        exit(GetEditorConfigJson(WorkbookCode, ''));
+    end;
+
+    /// <summary>Add-in configuration. AutoRegionJson (optional): a region to show or create at start, sent when the workbook is opened from a BC page.</summary>
+    procedure GetEditorConfigJson(WorkbookCode: Code[20]; AutoRegionJson: Text): Text
     var
         Workbook: Record "AK Workbook";
         DataService: Codeunit "AK Workbook Data Service";
+        WorkbookLines: Codeunit "AK Workbook Lines";
         Config: JsonObject;
+        AutoRegion: JsonObject;
         Result: Text;
     begin
         Config.ReadFrom(DataService.GetConfigJson());
@@ -32,8 +40,32 @@ codeunit 89001 "AK Workbook Mgt"
             Config.Add('workbookCode', Workbook."Code");
             Config.Add('description', Workbook.Description);
         end;
+        Config.Add('quickStarts', WorkbookLines.GetQuickStartsJson());
+        if AutoRegionJson <> '' then
+            if AutoRegion.ReadFrom(AutoRegionJson) then
+                Config.Add('autoRegion', AutoRegion);
         Config.WriteTo(Result);
         exit(Result);
+    end;
+
+    /// <summary>Opens (and if needed creates) a workbook that shows the given region, e.g. a journal batch or a document's lines.</summary>
+    procedure OpenWithRegion(WorkbookCode: Code[20]; Description: Text; Region: JsonObject)
+    var
+        Workbook: Record "AK Workbook";
+        Editor: Page "AK Workbook Editor";
+        RegionText: Text;
+    begin
+        if not Workbook.Get(WorkbookCode) then begin
+            Workbook.Init();
+            Workbook."Code" := WorkbookCode;
+            Workbook.Description := CopyStr(Description, 1, MaxStrLen(Workbook.Description));
+            Workbook.Insert(true);
+            Commit();
+        end;
+        Region.WriteTo(RegionText);
+        Editor.SetWorkbook(Workbook."Code");
+        Editor.SetAutoRegion(RegionText);
+        Editor.Run();
     end;
 
     procedure SetDescription(WorkbookCode: Code[20]; NewDescription: Text)

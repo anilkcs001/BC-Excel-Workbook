@@ -12,11 +12,12 @@ It puts a full spreadsheet inside Business Central, on a page that is **only the
 - **save** (or let **AutoSave** do it), **export** to .xlsx, and **import** .xlsx either as new sheets or as a replacement workbook;
 - **combine** two sheets on matching keys (Phase 2);
 - **reconcile** books against a bank statement, GSTR-2B or a party ledger (Phase 3), with an exceptions-first result sheet and a live summary sheet;
+- **work on journal and document lines** (Stage 2): *Edit in Excel Workbook* on the General Journal, Item Journal, Sales Order and Purchase Order pages opens the lines as a region; type or paste many lines and BC fills the template, batch or document, the next Line No. and the journal defaults, like a new line on the page. The same four appear as *Quick start* tiles in the region panel;
 - **edit BC data in the sheet and save it back** (Stage 1 write-back): change values or type new rows below the data, then **Save to BC**. Each field goes through BC's own `Validate`, and a *BC Status* column shows *Saved* or BC's error per row. Only tables an admin allows can be edited.
 
 Every command (AutoSave, Save to BC, Save, Refresh, Import, Export, Combine, Reconcile, Insert region) sits in the add-in's own toolbar, with region commands also on the right-click menu and on a region bar that appears when a cell inside a region is selected. The page has no BC fields or action bar. The look follows Excel: Excel green accent, Calibri 11, and regions styled like an Excel table (blue header, thin border, banded rows).
 
-Delivered: Phase 1 (sheet, data explorer, save, refresh, Excel I/O), Phase 2 (Combine), Phase 3 (Reconcile), Stage 1 of the advanced features (editable regions with write-back) and Stage 1b (regions anywhere on a sheet, cell-driven filters, Editing switch, Excel look). Next stages: journal and document lines, budget grid, cell-driven filters (slicers), drill-down, BC formulas in cells, KPI cards and charts.
+Delivered: Phase 1 (sheet, data explorer, save, refresh, Excel I/O), Phase 2 (Combine), Phase 3 (Reconcile), Stage 1 of the advanced features (editable regions with write-back) Stage 1b (regions anywhere on a sheet, cell-driven filters, Editing switch, Excel look) and Stage 2 (journal and document lines). Next stages: journal and document lines, budget grid, cell-driven filters (slicers), drill-down, BC formulas in cells, KPI cards and charts.
 
 ## 2. Object list
 
@@ -31,6 +32,11 @@ Delivered: Phase 1 (sheet, data explorer, save, refresh, Excel I/O), Phase 2 (Co
 | 89001 | Codeunit | AK Workbook Mgt |
 | 89002 | Codeunit | AK Workbook Write Service |
 | 89003 | Codeunit | AK Workbook Write Row |
+| 89004 | Codeunit | AK Workbook Lines (journal/document line regions, quick starts, open from pages) |
+| 89000 | PageExtension | AK General Journal (action *Edit in Excel Workbook*) |
+| 89001 | PageExtension | AK Item Journal (action *Edit in Excel Workbook*) |
+| 89002 | PageExtension | AK Sales Order (action *Edit in Excel Workbook*) |
+| 89003 | PageExtension | AK Purchase Order (action *Edit in Excel Workbook*) |
 | 89000 | PermissionSet | AK Workbook |
 | 89001 | PermissionSet | AK Workbook Admin (includes AK Workbook + editable-table setup) |
 | — | ControlAddIn | AK Excel Workbook |
@@ -104,6 +110,14 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 - **Combine and Reconcile** read the first region of a sheet (its block only, without the BC Status column).
 - **Screenshots** (mock data): [panel with a cell filter](docs/images/stage1b-r1-panel.jpg) · [region at A4 with title, filter cell and totals](docs/images/stage1b-r3-two-regions.jpg) · [right-click menu](docs/images/stage1b-r4-context.jpg) · [Editing switched off](docs/images/stage1b-r5-editing-off.jpg).
 
+**Journal and document lines (Stage 2, codeunit 89004 "AK Workbook Lines").**
+- **Region definitions.** General Journal, Item Journal, Sales Line and Purchase Line regions list their fields in page order (it is also the `Validate` order) using `FieldNo(...)`, filtered on journal template and batch or on document type and no.
+- **Open from the page.** *Edit in Excel Workbook* on the General Journal, Item Journal, Sales Order and Purchase Order pages calls `AK Workbook Mgt.OpenWithRegion`: it creates a workbook for that batch or document if needed (code such as `GJ GENERAL CASH` or `S SO-1042`) and passes the region as `autoRegion` in the add-in configuration. The add-in shows that region (refreshing it) or creates it on an empty sheet. The journal page's template and batch come from its filter group 2.
+- **Quick starts.** The same four regions are sent as `quickStarts` in the configuration and shown as tiles in the region panel (with the first general/item journal batch and the last open sales/purchase order as starting filters).
+- **New lines.** For a new row, a key cell left empty takes the region's filter value when that filter is one plain value (template, batch, document type and no.). In AL (`Write Row.InsertRow`) an empty last Integer key (Line No.) becomes the last line no. of the same batch or document + 10000. Journal lines then run the page's own `SetUpNewLine` (posting date, document no. from the batch's number series, balancing account, source code), before `Insert(true)` and the `Validate` of each typed field. Sales and purchase lines use the order's `OnInsert` checks (status open, header exists).
+- **Setup.** Add *Gen. Journal Line*, *Item Journal Line*, *Sales Line* and *Purchase Line* on the Editable Tables page with *Allow Modify* and *Allow Insert*; otherwise the region opens read-only and says why.
+- **Screenshots** (mock data): [new journal lines typed below, totals row ignored](docs/images/stage2-j1-new-lines.jpg) · [saved with Line No. and Document No. from BC](docs/images/stage2-j2-saved.jpg) · [quick start tiles](docs/images/stage2-j3-quick.jpg).
+
 **Editable regions and write-back (Stage 1).**
 - **Turning it on.** In the region panel, the *Allow editing* box shows for every table. It can be ticked only when the table is on the *Editable Tables* list with *Allow Modify* and the user has write permission (`AK Workbook Write Service.CanModify`); otherwise it is greyed out with the reason (`GetEditBlockReason`). With it ticked, all primary-key fields are loaded (they identify the record). The load adds a *BC Status* column and, per row, the record's `SystemModifiedAt` as a version.
 - **Locked and editable columns.** Normal fields are editable; primary-key fields, FlowFields, system fields (`No. >= 2000000000`) and BLOB/Media fields are locked and shown grey. If a user types or pastes into a locked cell of an existing row, the add-in puts the old value back and says why.
@@ -121,7 +135,7 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 
 ## 6. Known limitations
 
-- **Write-back is row by row on plain tables.** It covers tables an admin allows (masters such as Item, Customer, Vendor and simple setup tables). Journal lines, document lines and budgets need their own handling and come in later stages. Rows are never deleted from BC.
+- **Write-back is row by row.** It covers tables an admin allows: masters (Item, Customer, Vendor), simple setup tables, and journal, sales and purchase lines (Stage 2). Budgets come in a later stage. Rows are never deleted from BC, and posting still happens on the BC page.
 - **Field order matters.** Changed fields are validated left to right, like typing on a page. If one field's validation resets another (for example changing *Unit of Measure* recalculates a price), put the dependent field to the right.
 - **Large saves.** At most 1,000 rows per save; click *Save to BC* again for the rest. Each row is its own transaction, so a long save cannot be undone in one step.
 - **Reconciliation is one-to-one.** One books row (or one grouped key) matches one statement row. Many-to-one cases, such as one bank deposit covering three receipts, show as exceptions; group them with *Sum lines per key* if they share a reference.
@@ -137,6 +151,7 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 
 | Version | Date | Change |
 |---|---|---|
+| 1.5.0.0 | 2026-11-25 | Stage 2 **journal and document lines**: *Edit in Excel Workbook* on General Journal, Item Journal, Sales Order and Purchase Order opens the lines as a region; *Quick start* tiles in the region panel; new rows get template/batch or document keys from the filters, the next Line No. and the journal page's `SetUpNewLine` defaults. Region properties keep the region's column order. New codeunit 89004, page extensions 89000–89003. |
 | 1.4.1.0 | 2026-11-25 | Menus and dropdowns of the spreadsheet use the add-in font instead of a serif fallback. Paste menu uses Excel wording (Paste Values, Paste Formatting, Paste Column Widths, Paste All Except Borders); `build.mjs` re-applies these labels after a rebuild. |
 | 1.4.0.0 | 2026-11-25 | Stage 1b **regions**: Insert region at any cell (toolbar or right-click), many regions per sheet, region bar with Properties / Refresh / Unlink, regions move with inserted or deleted rows and columns, loads never overwrite the next region. **Cell-driven filters** (`[B1]`, `[Sheet!B1]`) refresh the region when the cell changes. **Editing switch** per region; totals and formula rows below a region are never sent as new records. **Excel look**: Excel green accent, Calibri 11, Excel-table style regions with banding. Saved workbooks from earlier versions open with each linked sheet as a region at A1. |
 | 1.3.1.0 | 2026-11-25 | *Allow editing* is always shown after picking a table; when the table cannot be edited it is greyed out with the reason (not on the Editable Tables list, Allow Modify off, or no modify permission). |

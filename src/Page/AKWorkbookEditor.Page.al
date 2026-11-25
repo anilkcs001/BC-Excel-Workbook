@@ -24,7 +24,7 @@ page 89001 "AK Workbook Editor"
                     end;
                     AddInReady := true;
                     UpdateCaption();
-                    CurrPage.Workbook.Init(WorkbookMgt.GetEditorConfigJson(WorkbookCode));
+                    CurrPage.Workbook.Init(WorkbookMgt.GetEditorConfigJson(WorkbookCode, AutoRegionJson));
                 end;
 
                 trigger AddInFrameReady()
@@ -111,6 +111,7 @@ page 89001 "AK Workbook Editor"
         WorkbookCode: Code[20];
         PayloadPurpose: Text;
         PendingLinkedTables: Text;
+        AutoRegionJson: Text;
         AddInReady: Boolean;
         HasUnsavedChanges: Boolean;
         NoWorkbookErr: Label 'Open a workbook from the Excel Workbooks list.';
@@ -121,6 +122,12 @@ page 89001 "AK Workbook Editor"
     procedure SetWorkbook(NewWorkbookCode: Code[20])
     begin
         WorkbookCode := NewWorkbookCode;
+    end;
+
+    /// <summary>Optional: a region (JSON from "AK Workbook Lines") to show or create when the editor starts. Call before Run().</summary>
+    procedure SetAutoRegion(NewAutoRegionJson: Text)
+    begin
+        AutoRegionJson := NewAutoRegionJson;
     end;
 
     local procedure UpdateCaption()

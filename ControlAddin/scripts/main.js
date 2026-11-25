@@ -98,7 +98,7 @@
 
     var ids = ['app', 'sheet', 'panel', 'dirty', 'title', 'code', 'file', 'bar-sources', 'progress', 'progress-bar', 'boot',
       'table-search', 'table-results', 'table-picked', 'step-fields', 'field-search', 'field-list', 'field-count',
-      'max-rows', 'sheet-name', 'load', 'load-hint', 'source-list', 'edit', 'edit-wrap', 'edit-why', 'regionbar', 'dest-cell', 'dest-wrap', 'region-target', 'load-label', 'write', 'write-count',
+      'max-rows', 'sheet-name', 'load', 'load-hint', 'source-list', 'edit', 'edit-wrap', 'edit-why', 'regionbar', 'dest-cell', 'dest-wrap', 'region-target', 'load-label', 'quick', 'write', 'write-count',
       'j-left', 'j-right', 'j-keys', 'j-cols', 'j-name', 'j-run', 'j-hint', 'j-status', 'j-case', 'autosave',
       'r-left', 'r-right', 'r-llabel', 'r-rlabel', 'r-keys', 'r-norm', 'r-group', 'r-lamt', 'r-lminus', 'r-ramt', 'r-rminus',
       'r-flip', 'r-tol', 'r-ldate', 'r-rdate', 'r-ad', 'r-days', 'r-lextra', 'r-rextra', 'r-name', 'r-summary', 'r-run', 'r-hint', 'r-tip'];
@@ -123,6 +123,7 @@
       '<div class="ak-panel__scroll">' +
       '  <section class="ak-step">' +
       '    <div class="ak-step__label"><span class="ak-step__num">1</span>Table</div>' +
+      '    <div class="ak-quick" id="ak-quick" hidden></div>' +
       '    <div class="ak-input-icon">' + H.icon('search') +
       '      <input id="ak-table-search" class="ak-input" type="search" placeholder="Search by name or number, e.g. Customer, 17" autocomplete="off" spellcheck="false">' +
       '    </div>' +
@@ -313,6 +314,7 @@
         case 'export': requestExport(); break;
         case 'view-data': togglePanel('data'); break;
         case 'insert-region': openRegionPanel(null); break;
+        case 'quick-start': startQuick(btn.getAttribute('data-quick')); break;
         case 'region-props': if (activeRegion()) openRegionPanel(activeRegion()); break;
         case 'region-refresh': if (activeRegion()) refreshOne(activeRegion().id); break;
         case 'region-remove': if (activeRegion()) unlinkSource(activeRegion().id); break;
@@ -650,6 +652,7 @@
 
   function resetTablePick() {
     state.table = null;
+    state.fieldOrder = null;
     state.fieldState = {};
     ui.tablePicked.hidden = true;
     ui.tableResults.hidden = false;
@@ -686,6 +689,7 @@
     state.fieldSearch = '';
     // Region properties: start from the region's own fields, filters, rows and editing choice.
     var pre = state.prefill;
+    state.fieldOrder = pre && pre.tableNo === data.tableNo ? pre.fields.map(function (f) { return f.no; }) : null;
     if (pre && pre.tableNo === data.tableNo) {
       data.fields.forEach(function (f) { state.fieldState[f.no].checked = false; });
       pre.fields.forEach(function (f) { if (state.fieldState[f.no]) state.fieldState[f.no].checked = true; });
@@ -739,7 +743,14 @@
   function selectedFields() {
     if (!state.table) return [];
     var editing = isEditing();
-    return state.table.fields.filter(function (f) { return state.fieldState[f.no].checked || (editing && f.pk); });
+    var list = state.table.fields.filter(function (f) { return state.fieldState[f.no].checked || (editing && f.pk); });
+    // Regions from a quick start or an existing region keep their own column order (it is also the Validate order).
+    var order = state.fieldOrder;
+    if (order && order.length) {
+      var pos = function (f) { var i = order.indexOf(f.no); return i < 0 ? 10000 + f.no : i; };
+      list.sort(function (a, b) { return pos(a) - pos(b); });
+    }
+    return list;
   }
 
   function updateLoadState() {
@@ -1597,7 +1608,10 @@
         return {
           row: x.r,
           op: x.op,
-          key: source.keyIdx.map(function (i) { return toBC(source.columns[i].type, x.row[i]); }),
+          key: source.keyIdx.map(function (i) {
+            var v = toBC(source.columns[i].type, x.row[i]);
+            return v === '' && x.op === 'insert' ? singleFilterValue(source, source.columns[i].no) : v;
+          }),
           version: x.op === 'modify' ? (source.ver[x.key] || '') : '',
           values: x.cols.filter(function (ci) { return !source.columns[ci].pk; }).map(function (ci) {
             return { no: source.columns[ci].no, value: toBC(source.columns[ci].type, x.row[ci]) };
@@ -1612,6 +1626,19 @@
         reject(e);
       });
     });
+  }
+
+  /**
+   * New rows in line regions: a key cell left empty takes the region's filter value when that filter is one
+   * plain value (journal template and batch, document type and no.). Line No. stays empty: AL gives the next one.
+   */
+  function singleFilterValue(source, fieldNo) {
+    var f;
+    try { f = resolveFilters(source).filter(function (x) { return x.fieldNo === fieldNo; })[0]; } catch (e) { return ''; }
+    if (!f) return '';
+    var v = String(f.filter).trim();
+    if (/\.\.|[|&<>*@()=]/.test(v)) return '';
+    return v.replace(/^'(.*)'$/, '$1');
   }
 
   /** AL answer to a write: shows the saved values (Validate may have changed other fields) and each row's status. */
@@ -1651,6 +1678,7 @@
     source.lastRows = Math.max(source.lastRows || 0, (source.rowCount || 0) + 1);
     setDirty(true);
     diffSource(source);
+    updateRegionBar(); renderSources(); renderBarSources();
     w.resolve({ saved: res.saved || 0, failed: res.failed || 0 });
   }
 
@@ -1776,6 +1804,68 @@
     ui.regionTarget.textContent = editing ? 'Region ' + editing.tableCaption + ' at ' + regionLabel(editing) : 'New region';
     ui.destWrap.hidden = !!editing;
     ui.loadLabel.textContent = editing ? 'Update region' : 'Insert region';
+  }
+
+  // =====================================================================================
+  // Stage 2: journal and document lines (quick starts in the region panel, regions opened from BC pages)
+  // =====================================================================================
+  function renderQuickStarts() {
+    var list = state.config.quickStarts || [];
+    ui.quick.hidden = !list.length;
+    ui.quick.innerHTML = list.length ? '<span class="ak-quick__label">Quick start</span>' + list.map(function (q) {
+      var r = q.region || {};
+      var meta = (r.filters || []).map(function (f) { return f.filter; }).filter(Boolean).join(' / ');
+      return '<button class="ak-quick__btn" data-act="quick-start" data-quick="' + H.escapeHtml(q.id) + '" title="' + H.escapeHtml(r.tableCaption || '') + '">' +
+        H.icon(/jnl/.test(q.id) ? 'receipt' : 'table') + '<span><b>' + H.escapeHtml(q.title) + '</b>' +
+        (meta ? '<small>' + H.escapeHtml(meta) + '</small>' : '') + '</span></button>';
+    }).join('') : '';
+  }
+
+  /** A quick start fills the panel with the region's table, fields (in page order) and filters; the user can still change them. */
+  function startQuick(id) {
+    var q = (state.config.quickStarts || []).filter(function (x) { return x.id === id; })[0];
+    if (!q) return;
+    var r = q.region;
+    state.prefill = { tableNo: r.tableNo, fields: r.fields, filters: r.filters, editable: r.editable, maxRows: state.config.defaultMaxRows };
+    if (!state.tables.some(function (t) { return t.id === r.tableNo; })) state.tables.push({ id: r.tableNo, name: r.tableCaption, caption: r.tableCaption });
+    ui.sheetName.value = H.safeSheetName(q.title);
+    pickTable(r.tableNo);
+  }
+
+  /** Workbook opened from a journal or document page: show that region (refresh it) or create it. */
+  function applyAutoRegion(def) {
+    if (!def || !workbook()) return;
+    var sig = function (filters) {
+      return JSON.stringify((filters || []).map(function (f) { return [f.fieldNo, String(f.filter)]; }).sort());
+    };
+    var found = sourceList().filter(function (s) { return s.tableNo === def.tableNo && sig(s.filters) === sig(def.filters); })[0];
+    if (found) {
+      activateSheet(found.id);
+      updateRegionBar();
+      confirmDiscard([found]).then(function (ok) { if (ok) runSource(found).then(function () { updateRegionBar(); }, function () { }); });
+      return;
+    }
+    var wb = workbook(), sheet = wb.getActiveSheet();
+    var a1 = sheet.getRange(0, 0, 1, 1).getValue();
+    var empty = sheet.getLastRow() <= 0 && sheet.getLastColumn() <= 0 && (a1 == null || a1 === '');
+    if (!empty || regionsOn(sheet.getSheetId()).length) {
+      sheet = wb.insertSheet(uniqueSheetName(def.tableCaption));
+      excelLook(sheet);
+    }
+    wb.setActiveSheet(sheet);
+    var source = {
+      id: H.uid('rg'), sheetId: sheet.getSheetId(), anchor: { row: 0, col: 0 }, lastRows: 0, lastCols: 0,
+      tableNo: def.tableNo, tableCaption: def.tableCaption,
+      fields: def.fields.map(function (f) { return { no: f.no, caption: f.caption, type: f.type, pk: !!f.pk }; }),
+      filters: def.filters || [], maxRows: state.config.defaultMaxRows, editable: !!def.editable
+    };
+    if (source.editable) source.editing = true;
+    runSource(source).then(function (r) {
+      updateRegionBar();
+      H.toast('success', def.tableCaption + ': ' + H.formatInt(r.loaded) + ' lines loaded.' +
+        (source.editable ? ' Type or paste lines below, then Save to BC.' : ''));
+      if (!source.editable && def.editReason) H.toast('info', 'Read-only: ' + def.editReason);
+    }, function () { });
   }
 
   // =====================================================================================
@@ -2762,7 +2852,11 @@
     ui.code.textContent = state.config.workbookCode || '';
     ui.code.hidden = !state.config.workbookCode;
     startUniver();
-    H.invoke('AddInFrameReady', []);
+    renderQuickStarts();
+    H.invoke('AddInFrameReady', []).then(function () {
+      // AL sends the saved workbook during AddInFrameReady; apply the page's region after it is in place.
+      if (state.config.autoRegion) setTimeout(guard(function () { applyAutoRegion(state.config.autoRegion); }), 900);
+    });
   });
 
   window.Refresh = guard(function () { refreshAll(); });
