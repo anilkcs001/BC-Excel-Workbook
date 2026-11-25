@@ -169,6 +169,7 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 
 | Version | Date | Change |
 |---|---|---|
+| 1.7.2.0 | 2026-11-26 | *Update region* always reloads the region where it is (never on a new sheet). After changing a region, clicking an empty cell switches the panel back to *At <cell>* (not *New sheet*). |
 | 1.7.1.0 | 2026-11-26 | Fix: with the region or budget panel open, clicking another cell now moves the target to that cell (*New region at A4*); before, the panel kept the first cell or updated the last inserted region. A region or grid can no longer be inserted on a period picker cell. The region bar now follows mouse clicks reliably (selection is read from the `set-selections` operation). |
 | 1.7.0.0 | 2026-11-26 | Stage 4 **period picker**: dropdown cell with 16 periods (calendar and fiscal), dates shown beside it; date filters that point to it get the period and refresh on change; AL localizes ISO dates in date filters (`LocalizeIsoDates`); work date in the add-in configuration. |
 | 1.6.0.0 | 2026-11-25 | Stage 3 **budget grid**: budget panel (name, start, periods, month/quarter, account and dimension filters with cell references, last year's actuals), grid region with Total formulas, spreading a typed yearly total by last year's actuals, Save to BC adds one G/L Budget Entry per changed cell for the difference, per-cell results and reload after a full save. Formula recalculation is no longer mistaken for user edits. New codeunits 89005 and 89006. |

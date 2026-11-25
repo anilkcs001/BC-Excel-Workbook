@@ -1841,6 +1841,7 @@
   function openRegionPanel(source) {
     var wasEditing = !!state.regionEdit;
     state.regionEdit = source ? source.id : null;
+    if (!source) setDest('ak-dest', 'here');
     if (!source && wasEditing && state.table) resetTablePick();
     var c = selectedCell();
     state.regionAnchor = source ? { sheetId: source.sheetId, row: anchorOf(source).row, col: anchorOf(source).col } : c;
@@ -1867,8 +1868,11 @@
     if (view === 'data') {
       var editing = state.regionEdit && state.sources[state.regionEdit];
       if (editing && regionAt(c.sheetId, c.row, c.col) === editing) return;
+      var wasEditing = !!editing;
       state.regionEdit = null;
       state.regionAnchor = c;
+      // A click on a cell means "put the next region here": switch back from New sheet to At <cell>.
+      if (wasEditing) setDest('ak-dest', 'here');
       renderRegionTarget();
     } else if (view === 'budget') {
       var b = state.budgetEdit && state.sources[state.budgetEdit];
@@ -1877,6 +1881,11 @@
       state.budgetAnchor = c;
       ui.bDestCell.textContent = sheetName(c.sheetId) + '!' + cellName(c.row, c.col);
     }
+  }
+
+  function setDest(name, value) {
+    var r = ui.panel.querySelector('input[name=' + name + '][value=' + value + ']');
+    if (r) r.checked = true;
   }
 
   function renderRegionTarget() {

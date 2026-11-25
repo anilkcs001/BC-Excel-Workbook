@@ -2,7 +2,7 @@
   "id": "95fe8d28-3803-46c7-b248-27d43216bf64",
   "name": "AK Excel Workbook",
   "publisher": "AK",
-  "version": "1.7.1.0",
+  "version": "1.7.2.0",
   "brief": "Excel-grade spreadsheet inside Business Central with live table data and write-back.",
   "description": "Embeds a full spreadsheet (formulas, formatting, filters, sort, conditional formatting, find/replace, data validation) in Business Central. Users pull data from any table they have permission to read, refresh it later, save workbooks and import/export .xlsx files.",
   "privacyStatement": "",
