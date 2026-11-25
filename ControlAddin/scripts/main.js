@@ -475,11 +475,13 @@
     state.disposables.push(state.api.addEvent(state.api.Event.CommandExecuted, function (evt) {
       if (evt && evt.type === MUTATION && state.suppressDirty === 0) setDirty(true);
       if (evt && evt.type === MUTATION) onSheetMutation(evt);
+      // Clicking a cell runs this operation; it is the reliable signal that the selection moved.
+      if (evt && evt.id === 'sheet.operation.set-selections') onSelectionMoved();
     }));
 
     // Univer listens to window resize; BC resizes the iframe but the panel changes our own width.
     try {
-      state.disposables.push(state.api.addEvent(state.api.Event.SelectionChanged, H.debounce(function () { guard(updateRegionBar)(); }, 80)));
+      state.disposables.push(state.api.addEvent(state.api.Event.SelectionChanged, onSelectionMoved));
       state.disposables.push(state.api.addEvent(state.api.Event.ActiveSheetChanged, function () { setTimeout(guard(updateRegionBar), 50); }));
     } catch (e) { /* events optional */ }
     registerMenus();
@@ -492,6 +494,12 @@
     ui.boot.classList.add('is-done');
     setTimeout(function () { if (ui.boot.parentNode) ui.boot.parentNode.removeChild(ui.boot); }, 300);
   }
+
+  /** The selection moved: show the region bar for the cell and let open panels follow it. */
+  var onSelectionMoved = H.debounce(function () {
+    guard(updateRegionBar)();
+    guard(followSelectionInPanels)();
+  }, 80);
 
   function workbook() {
     return state.api && state.api.getActiveWorkbook();
@@ -800,6 +808,7 @@
       anchor = { row: t.row, col: t.col };
       var clash = regionAt(sheet.getSheetId(), anchor.row, anchor.col);
       if (clash) { H.toast('error', 'This cell is inside region ' + clash.tableCaption + '. Pick an empty cell, or use Properties to change that region.'); return; }
+      if (slicerAt(sheet.getSheetId(), anchor.row, anchor.col)) { H.toast('error', cellName(anchor.row, anchor.col) + ' is a period picker. Click the cell where the region should start (for example A4).'); return; }
       if (state.joins[sheet.getSheetId()] || state.recons[sheet.getSheetId()]) { H.toast('error', 'This sheet is a combined or reconciled result. Put the region on another sheet.'); return; }
     }
     wb.setActiveSheet(sheet);
@@ -1847,12 +1856,35 @@
     }
   }
 
+  /**
+   * While the region or budget panel is open, it follows the cell the user clicks: a click outside the region
+   * being changed switches the panel back to "new region at <that cell>", so the button never updates the
+   * previous region by surprise.
+   */
+  function followSelectionInPanels() {
+    if (!ui.app.classList.contains('is-panel-open')) return;
+    var view = ui.panel.getAttribute('data-view'), c = selectedCell();
+    if (view === 'data') {
+      var editing = state.regionEdit && state.sources[state.regionEdit];
+      if (editing && regionAt(c.sheetId, c.row, c.col) === editing) return;
+      state.regionEdit = null;
+      state.regionAnchor = c;
+      renderRegionTarget();
+    } else if (view === 'budget') {
+      var b = state.budgetEdit && state.sources[state.budgetEdit];
+      if (b && regionAt(c.sheetId, c.row, c.col) === b) return;
+      if (b) { state.budgetEdit = null; prepareBudgetPanel(); return; }
+      state.budgetAnchor = c;
+      ui.bDestCell.textContent = sheetName(c.sheetId) + '!' + cellName(c.row, c.col);
+    }
+  }
+
   function renderRegionTarget() {
     var editing = state.regionEdit && state.sources[state.regionEdit];
     var t = state.regionAnchor;
     var here = t ? sheetName(t.sheetId) + '!' + cellName(t.row, t.col) : 'A1';
     ui.destCell.textContent = here;
-    ui.regionTarget.textContent = editing ? 'Region ' + editing.tableCaption + ' at ' + regionLabel(editing) : 'New region';
+    ui.regionTarget.textContent = editing ? 'Changing region ' + editing.tableCaption + ' at ' + regionLabel(editing) : 'New region at ' + here;
     ui.destWrap.hidden = !!editing;
     ui.loadLabel.textContent = editing ? 'Update region' : 'Insert region';
   }
@@ -2046,6 +2078,7 @@
       sheet = wb.getSheetBySheetId(t.sheetId) || wb.getActiveSheet(); anchor = { row: t.row, col: t.col };
       var clash = regionAt(sheet.getSheetId(), anchor.row, anchor.col);
       if (clash) { H.toast('error', 'This cell is inside region ' + clash.tableCaption + '. Pick an empty cell.'); return; }
+      if (slicerAt(sheet.getSheetId(), anchor.row, anchor.col)) { H.toast('error', cellName(anchor.row, anchor.col) + ' is a period picker. Click the cell where the grid should start.'); return; }
     }
     wb.setActiveSheet(sheet);
     var source = existing || { id: H.uid('rg'), kind: 'budget', sheetId: sheet.getSheetId(), anchor: anchor, lastRows: 0, lastCols: 0, fields: [] };
