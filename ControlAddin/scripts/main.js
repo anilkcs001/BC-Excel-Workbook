@@ -37,7 +37,6 @@
     pending: {},            // requestId -> { source, columns, rows, resolve, reject }
     budgetPending: {},      // budget load requestId -> { source, resolve, reject }
     slicers: {},            // period pickers: id -> { sheetId, row, col, kind }
-    dash: { open: false, items: [] }, // Stage 7 dashboard strip (KPI cards and charts)
     writes: {},             // write requestId -> { source, changes, resolve }
     applying: 0,            // > 0 while the add-in itself changes cells (not a user edit)
     requestSeq: 0,
@@ -83,7 +82,7 @@
       '      <button class="ak-btn ak-btn--subtle" data-act="import" title="Open an .xlsx file">' + H.icon('upload') + '<span>Import</span></button>' +
       '      <button class="ak-btn ak-btn--subtle" data-act="export" title="Download as .xlsx">' + H.icon('download') + '<span>Export</span></button>' +
       '      <span class="ak-bar__sep" aria-hidden="true"></span>' +
-      '      <button class="ak-btn ak-btn--outline" data-act="dash-toggle" id="ak-dash-toggle" title="KPI cards and charts from cells, shown above the sheet">' + H.icon('sigma') + '<span>Dashboard</span></button>' +
+      '      <button class="ak-btn ak-btn--outline" data-act="insert-chart" title="Insert a chart or KPI card from the selected cells (also on the right-click menu)">' + H.icon('chart') + '<span>Insert chart</span></button>' +
       '      <button class="ak-btn ak-btn--outline" data-act="view-combine" aria-controls="ak-panel" title="Join two sheets on matching keys">' + H.icon('merge') + '<span>Combine</span></button>' +
       '      <button class="ak-btn ak-btn--outline" data-act="view-recon" aria-controls="ak-panel" title="Reconcile books against a statement, GSTR-2B or party ledger">' + H.icon('scale') + '<span>Reconcile</span></button>' +
       '      <button class="ak-btn ak-btn--primary" data-act="insert-region" aria-controls="ak-panel" title="Put a Business Central table at the selected cell (also on the right-click menu)">' + H.icon('database') + '<span>Insert region</span></button>' +
@@ -91,7 +90,6 @@
       '    <input type="file" id="ak-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>' +
       '  </header>' +
       '  <div class="ak-regionbar" id="ak-regionbar" hidden></div>' +
-      '  <div class="ak-dash" id="ak-dash" hidden></div>' +
       '  <div class="ak-progress" id="ak-progress" hidden><div class="ak-progress__bar" id="ak-progress-bar"></div></div>' +
       '  <div class="ak-body">' +
       '    <main class="ak-sheet" id="ak-sheet"></main>' +
@@ -104,7 +102,7 @@
     var ids = ['app', 'sheet', 'panel', 'dirty', 'title', 'code', 'file', 'bar-sources', 'progress', 'progress-bar', 'boot',
       'table-search', 'table-results', 'table-picked', 'step-fields', 'field-search', 'field-list', 'field-count',
       'max-rows', 'sheet-name', 'load', 'load-hint', 'source-list', 'edit', 'edit-wrap', 'edit-why', 'regionbar', 'dest-cell', 'dest-wrap', 'region-target', 'load-label', 'quick',
-      'dash', 'dash-toggle', 'b-name', 'b-start', 'b-periods', 'b-acc', 'b-d1', 'b-d2', 'b-d1cap', 'b-d2cap', 'b-ly', 'b-dest-wrap', 'b-dest-cell', 'b-why', 'b-hint', 'b-run', 'b-run-label', 'write', 'write-count',
+      'b-name', 'b-start', 'b-periods', 'b-acc', 'b-d1', 'b-d2', 'b-d1cap', 'b-d2cap', 'b-ly', 'b-dest-wrap', 'b-dest-cell', 'b-why', 'b-hint', 'b-run', 'b-run-label', 'write', 'write-count',
       'j-left', 'j-right', 'j-keys', 'j-cols', 'j-name', 'j-run', 'j-hint', 'j-status', 'j-case', 'autosave',
       'r-left', 'r-right', 'r-llabel', 'r-rlabel', 'r-keys', 'r-norm', 'r-group', 'r-lamt', 'r-lminus', 'r-ramt', 'r-rminus',
       'r-flip', 'r-tol', 'r-ldate', 'r-rdate', 'r-ad', 'r-days', 'r-lextra', 'r-rextra', 'r-name', 'r-summary', 'r-run', 'r-hint', 'r-tip'];
@@ -324,11 +322,7 @@
         case 'quick-start': startQuick(btn.getAttribute('data-quick')); break;
         case 'open-budget': openBudgetPanel(null); break;
         case 'period-picker': insertPeriodPicker(); break;
-        case 'dash-toggle': openDash(); break;
-        case 'dash-kpi': addKpi(); break;
-        case 'dash-bar': addChart('bar'); break;
-        case 'dash-line': addChart('line'); break;
-        case 'dash-remove': case 'dash-kind': case 'dash-good': case 'dash-go': onDashClick(act, btn.getAttribute('data-id')); break;
+        case 'insert-chart': openChartPicker(); break;
         case 'region-props': if (activeRegion()) { if (isBudget(activeRegion())) openBudgetPanel(activeRegion()); else openRegionPanel(activeRegion()); } break;
         case 'region-refresh': if (activeRegion()) refreshOne(activeRegion().id); break;
         case 'region-open': drillAt(selectedCell()); break;
@@ -409,16 +403,6 @@
     });
     ui.loadBtn.addEventListener('click', loadFromPanel);
     ui.edit.addEventListener('change', function () { renderFields(); updateLoadState(); });
-    ui.dash.addEventListener('focusout', function (e) {
-      var t = e.target.closest('.ak-dcard__title');
-      if (!t) return;
-      var item = state.dash.items.filter(function (x) { return x.id === t.getAttribute('data-id'); })[0];
-      var v = t.textContent.trim();
-      if (item && v && v !== item.title) { item.title = v.substring(0, 80); setDirty(true); }
-    });
-    ui.dash.addEventListener('keydown', function (e) {
-      if (e.target.classList.contains('ak-dcard__title') && e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
-    });
     ui.regionbar.addEventListener('change', function (e) {
       if (e.target.hasAttribute('data-region-edit') && activeRegion()) setRegionEditing(activeRegion(), e.target.checked);
     });
@@ -493,7 +477,7 @@
 
     state.disposables.push(state.api.addEvent(state.api.Event.CommandExecuted, function (evt) {
       if (evt && evt.type === MUTATION && state.suppressDirty === 0) setDirty(true);
-      if (evt && evt.type === MUTATION) { onSheetMutation(evt); scheduleDash(); }
+      if (evt && evt.type === MUTATION) { onSheetMutation(evt); redrawCharts(); }
       // Clicking a cell runs this operation; it is the reliable signal that the selection moved.
       if (evt && evt.id === 'sheet.operation.set-selections') onSelectionMoved();
     }));
@@ -508,6 +492,7 @@
     } catch (e) { /* events optional */ }
     registerMenus();
     registerBCFunctions();
+    registerChartComponent();
 
     var kick = H.debounce(function () { window.dispatchEvent(new Event('resize')); }, 60);
     if (window.ResizeObserver) {
@@ -1858,8 +1843,7 @@
       catch (e) { /* menus optional */ }
     };
     add('ak.drill', 'Open in Business Central (Ctrl+click)', function () { drillAt(selectedCell()); }, 0);
-    add('ak.dash.kpi', 'Add KPI card from selection', function () { addKpi(); }, 4);
-    add('ak.dash.chart', 'Add chart from selection', function () { addChart('bar'); }, 5);
+    add('ak.chart.insert', 'Insert chart from selection', function () { openChartPicker(); }, 4);
     add('ak.region.insert', 'Insert Business Central region here', function () { openRegionPanel(null); }, 0);
     add('ak.budget.insert', 'Insert budget grid here', function () { openBudgetPanel(null); }, 1);
     add('ak.period.insert', 'Insert period picker here', function () { insertPeriodPicker(); }, 1);
@@ -2655,23 +2639,286 @@
   }
 
   // =====================================================================================
-  // Stage 7: dashboard strip with KPI cards and charts drawn from cell ranges
+  // Stage 7: Excel-style charts and KPI cards on the sheet
   //
-  // Items live in state.dash.items: { id, type: 'kpi' | 'chart', sheetId, r, c, rows, cols, title, kind, good }.
-  // A KPI card shows one cell (and, when two cells were selected, the change against the second one).
-  // A chart reads a block: first column = labels, first row = series names, the rest = numbers.
-  // The strip re-draws whenever cells change (including formula results such as BC functions).
+  // Charts are Univer floating objects (sheets-drawing): they sit over the cells, can be dragged and
+  // resized, and are saved in the workbook snapshot with their settings in `data`:
+  //   { kind: 'column' | 'bar' | 'line' | 'area' | 'pie' | 'doughnut' | 'kpi', sheetId, r, c, rows, cols,
+  //     title, labels: bool, legend: bool, cmp: { r, c } (KPI), good: 'up' | 'down' (KPI) }
+  // The add-in draws each chart as SVG from the live cell values and redraws after every change
+  // (formula results included, so BC functions and regions feed the charts).
   // =====================================================================================
-  var DASH_COLORS = ['#4472C4', '#ED7D31', '#A5A5A5', '#FFC000', '#5B9BD5', '#70AD47'];
+  var XL_PALETTE = ['#4472C4', '#ED7D31', '#A5A5A5', '#FFC000', '#5B9BD5', '#70AD47', '#264478', '#9E480E'];
+  var CHART_TYPES = [
+    ['column', 'Clustered Column'], ['bar', 'Clustered Bar'], ['line', 'Line with Markers'],
+    ['area', 'Area'], ['pie', 'Pie'], ['doughnut', 'Doughnut'], ['kpi', 'KPI Card']
+  ];
+  var charts = { mounted: {} };   // floatDomId -> { el, data }
 
-  function dashItems() { return state.dash.items; }
+  function registerChartComponent() {
+    var R = window.AKUniver && window.AKUniver.React;
+    if (!R || !state.api.registerComponent) return;
+    var Chart = function (props) {
+      var ref = R.useRef(null);
+      var data = props.data || {};
+      R.useEffect(function () {
+        var el = ref.current;
+        if (!el) return undefined;
+        charts.mounted[props.floatDomId] = { el: el, data: data, id: props.floatDomId };
+        drawChartSafe(props.floatDomId);
+        var ro = window.ResizeObserver ? new ResizeObserver(function () { drawChartSafe(props.floatDomId); }) : null;
+        if (ro) ro.observe(el);
+        return function () { if (ro) ro.disconnect(); delete charts.mounted[props.floatDomId]; };
+      }, [props.floatDomId, JSON.stringify(data)]);
+      return R.createElement('div', { ref: ref, className: 'ak-xchart', 'data-chart': props.floatDomId });
+    };
+    try { state.api.registerComponent('AKChart', Chart); } catch (e) { /* charts optional */ }
+    // The small toolbar on a selected chart. Pointer events on it must not start a drag of the chart.
+    ['pointerdown', 'mousedown'].forEach(function (type) {
+      document.addEventListener(type, function (e) { if (e.target.closest && e.target.closest('.ak-xchart__tools, .ak-xchart__rename')) e.stopPropagation(); }, true);
+    });
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest && e.target.closest('[data-chart-act]');
+      if (!btn) return;
+      e.preventDefault(); e.stopPropagation();
+      guard(function () { onChartTool(btn.getAttribute('data-chart-act'), btn.getAttribute('data-id')); })();
+    }, true);
+  }
 
-  function selectionBlock() {
+  function drawChartSafe(id) {
+    var m = charts.mounted[id];
+    if (!m || !workbook()) return;
+    try { m.el.innerHTML = chartMarkup(m.data, m.el.clientWidth || 480, m.el.clientHeight || 300, id); }
+    catch (e) { m.el.innerHTML = '<div class="ak-xchart__err">Chart error: ' + H.escapeHtml(e.message) + '</div>'; }
+  }
+
+  var redrawCharts = H.debounce(function () { Object.keys(charts.mounted).forEach(drawChartSafe); }, 250);
+
+  // ---------------------------------------------------------------- reading the data block
+  function num(v) {
+    if (typeof v === 'number') return v;
+    if (v == null) return NaN;
+    var t = String(v).trim();
+    if (!/^[\s\-−(]*[₹$€]?\s*[\d.,]+\)?\s*%?$/.test(t)) return NaN;
+    var n = +t.replace(/[^0-9.]/g, '');
+    return /^[\s]*[-−(]/.test(t) ? -n : n;
+  }
+
+  /** Block -> { categories[], series[{ name, values[] }] }: first column labels, first row series names (when they are text). */
+  function chartSeries(d) {
+    var sheet = workbook().getSheetBySheetId(d.sheetId);
+    if (!sheet) throw new Error('The sheet with the chart data was deleted.');
+    var block = sheet.getRange(d.r, d.c, d.rows, d.cols).getRawValues();
+    var hasHeader = d.rows > 1 && block[0].some(function (v, i) { return (i > 0 || d.cols === 1) && v !== '' && v != null && isNaN(num(v)); });
+    var body = block.slice(hasHeader ? 1 : 0);
+    var hasLabels = d.cols > 1 && body.some(function (r) { return r[0] !== '' && r[0] != null && isNaN(num(r[0])); });
+    var first = hasLabels ? 1 : 0, series = [];
+    for (var c = first; c < d.cols; c++) {
+      series.push({ name: hasHeader ? String(block[0][c] == null ? '' : block[0][c]) : 'Series ' + (c - first + 1), values: body.map(function (r) { return num(r[c]); }) });
+    }
+    var categories = body.map(function (r, i) { return hasLabels ? String(r[0]) : String(i + 1); });
+    return { categories: categories, series: series.slice(0, 8), hasHeader: hasHeader };
+  }
+
+  // ---------------------------------------------------------------- number formats and axis
+  function fmtAxis(n, step) {
+    var a = Math.abs(n), s = n < 0 ? '-' : '';
+    if (a >= 1e7) return s + trim(a / 1e7, step / 1e7) + ' Cr';
+    if (a >= 1e5) return s + trim(a / 1e5, step / 1e5) + ' L';
+    if (a >= 1e3) return s + trim(a / 1e3, step / 1e3) + 'K';
+    return s + trim(a, step);
+  }
+  function trim(v, step) { var dec = step < 1 ? Math.min(2, Math.ceil(-Math.log10(step))) : 0; return v.toFixed(dec).replace(/\.0+$/, ''); }
+  function fmtFull(n) {
+    if (!isFinite(n)) return '—';
+    var dec = Math.round(n) === n || Math.abs(n) >= 1000 ? 0 : 2;
+    try { return n.toLocaleString('en-IN', { maximumFractionDigits: dec, minimumFractionDigits: dec }); } catch (e) { return n.toFixed(dec); }
+  }
+  /** Excel-like "nice" axis: 4-6 steps of 1, 2 or 5 x 10^n, always including zero. */
+  function niceAxis(min, max) {
+    min = Math.min(0, min); max = Math.max(0, max);
+    if (min === max) max = min + 1;
+    var raw = (max - min) / 5, mag = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / mag;
+    var step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * mag;
+    return { min: Math.floor(min / step) * step, max: Math.ceil(max / step) * step, step: step };
+  }
+  function esc(t) { return H.escapeHtml(t == null ? '' : String(t)); }
+  function clip(t, n) { t = String(t); return t.length > n ? t.slice(0, n - 1) + '…' : t; }
+
+  // ---------------------------------------------------------------- drawing
+  function chartMarkup(d, W, Hh, id) {
+    var tools = '<div class="ak-xchart__tools">' +
+      '<button data-chart-act="type" data-id="' + id + '" title="Change chart type">' + H.icon('table') + '</button>' +
+      (d.kind !== 'kpi' ? '<button data-chart-act="labels" data-id="' + id + '" title="Data labels on/off">123</button>' : '<button data-chart-act="good" data-id="' + id + '" title="Higher is ' + (d.good === 'down' ? 'worse' : 'better') + '">' + (d.good === 'down' ? '↓' : '↑') + '</button>') +
+      '<button data-chart-act="data" data-id="' + id + '" title="Use the selected cells as the chart data">' + H.icon('sliders') + '</button>' +
+      '<button data-chart-act="title" data-id="' + id + '" title="Rename">' + H.icon('pencil') + '</button>' +
+      '<button data-chart-act="delete" data-id="' + id + '" title="Delete chart">' + H.icon('x') + '</button></div>';
+    if (d.kind === 'kpi') return kpiMarkup(d, W, Hh) + tools;
+    var data = chartSeries(d);
+    var title = d.title || '';
+    var top = title ? 34 : 12, legend = d.legend === false || (data.series.length < 2 && d.kind !== 'pie' && d.kind !== 'doughnut') ? null : legendLayout(d, data, W);
+    var legendH = legend ? legend.rows * 16 + 10 : 0;
+    var svg = '<svg class="ak-xchart__svg" viewBox="0 0 ' + W + ' ' + Hh + '" width="' + W + '" height="' + Hh + '" font-family="Calibri, \'Segoe UI\', Arial, sans-serif">' +
+      (title ? '<text x="' + (W / 2) + '" y="22" text-anchor="middle" font-size="14" fill="#595959">' + esc(clip(title, 60)) + '</text>' : '');
+    var plot = { x: 12, y: top, w: W - 24, h: Hh - top - legendH - 8 };
+    if (d.kind === 'pie' || d.kind === 'doughnut') svg += pieSvg(d, data, plot);
+    else svg += axisSvg(d, data, plot);
+    if (legend) svg += legendSvg(legend, Hh - legendH + 4);
+    return svg + '</svg>' + tools;
+  }
+
+  /** Legend items centred under the plot, wrapped onto more lines when they do not fit (as Excel does). */
+  function legendLayout(d, data, W) {
+    var items = d.kind === 'pie' || d.kind === 'doughnut'
+      ? data.categories.slice(0, 12).map(function (c, i) { return { name: c, color: XL_PALETTE[i % 8] }; })
+      : data.series.map(function (s, i) { return { name: s.name, color: XL_PALETTE[i % 8] }; });
+    var lines = [[]], used = 0, max = W - 16;
+    items.forEach(function (it) {
+      it.w = 22 + Math.min(clip(it.name, 18).length * 6, 112);
+      if (used + it.w > max && lines[lines.length - 1].length) { lines.push([]); used = 0; }
+      lines[lines.length - 1].push(it); used += it.w;
+    });
+    lines = lines.slice(0, 3);
+    return { lines: lines, rows: lines.length, W: W };
+  }
+
+  function legendSvg(lg, y) {
+    var out = '';
+    lg.lines.forEach(function (line, li) {
+      var total = line.reduce(function (t, it) { return t + it.w; }, 0), x = Math.max(8, (lg.W - total) / 2), yy = y + li * 16;
+      line.forEach(function (it) {
+        out += '<rect x="' + x + '" y="' + (yy + 2) + '" width="9" height="9" fill="' + it.color + '"/>' +
+          '<text x="' + (x + 13) + '" y="' + (yy + 10) + '" font-size="11" fill="#595959">' + esc(clip(it.name, 18)) + '</text>';
+        x += it.w;
+      });
+    });
+    return out;
+  }
+
+  function axisSvg(d, data, p) {
+    var horiz = d.kind === 'bar', all = [];
+    data.series.forEach(function (s) { s.values.forEach(function (v) { if (isFinite(v)) all.push(v); }); });
+    var ax = niceAxis(Math.min.apply(null, all.concat([0])), Math.max.apply(null, all.concat([0])));
+    var ticks = []; for (var t = ax.min; t <= ax.max + ax.step / 2; t += ax.step) ticks.push(t);
+    var labelW = Math.max.apply(null, ticks.map(function (v) { return fmtAxis(v, ax.step).length; })) * 6.5 + 8;
+    var catW = horiz ? Math.min(110, Math.max.apply(null, data.categories.map(function (c) { return clip(c, 16).length; }).concat([2])) * 6.2 + 10) : 0;
+    var x0 = p.x + (horiz ? catW : labelW), y0 = p.y, w = p.w - (horiz ? catW : labelW) - (horiz && d.labels ? 34 : 0), h = p.h - (horiz ? 18 : 20);
+    var n = data.categories.length, out = '';
+    var val = function (v) { return (v - ax.min) / (ax.max - ax.min); };
+    // gridlines and value labels
+    ticks.forEach(function (tv) {
+      if (horiz) {
+        var x = x0 + val(tv) * w;
+        out += '<line x1="' + x + '" x2="' + x + '" y1="' + y0 + '" y2="' + (y0 + h) + '" stroke="#D9D9D9" stroke-width="0.75"/>' +
+          '<text x="' + x + '" y="' + (y0 + h + 13) + '" text-anchor="middle" font-size="10" fill="#595959">' + fmtAxis(tv, ax.step) + '</text>';
+      } else {
+        var y = y0 + h - val(tv) * h;
+        out += '<line x1="' + x0 + '" x2="' + (x0 + w) + '" y1="' + y + '" y2="' + y + '" stroke="#D9D9D9" stroke-width="0.75"/>' +
+          '<text x="' + (x0 - 6) + '" y="' + (y + 3.5) + '" text-anchor="end" font-size="10" fill="#595959">' + fmtAxis(tv, ax.step) + '</text>';
+      }
+    });
+    var zero = horiz ? x0 + val(0) * w : y0 + h - val(0) * h;
+    out += horiz ? '<line x1="' + zero + '" x2="' + zero + '" y1="' + y0 + '" y2="' + (y0 + h) + '" stroke="#BFBFBF"/>'
+      : '<line x1="' + x0 + '" x2="' + (x0 + w) + '" y1="' + zero + '" y2="' + zero + '" stroke="#BFBFBF"/>';
+    var band = (horiz ? h : w) / Math.max(n, 1), S = data.series.length;
+    // category labels
+    var every = horiz ? 1 : Math.ceil(n / Math.max(1, Math.floor(w / 46)));
+    data.categories.forEach(function (c, i) {
+      if (i % every) return;
+      if (horiz) out += '<text x="' + (x0 - 6) + '" y="' + (y0 + band * (i + 0.5) + 3.5) + '" text-anchor="end" font-size="10" fill="#595959">' + esc(clip(c, 16)) + '</text>';
+      else out += '<text x="' + (x0 + band * (i + 0.5)) + '" y="' + (y0 + h + 14) + '" text-anchor="middle" font-size="10" fill="#595959">' + esc(clip(c, Math.max(4, Math.floor(band * every / 6.2)))) + '</text>';
+    });
+    var label = function (x, y, v, anchor) {
+      return d.labels ? '<text x="' + x + '" y="' + y + '" text-anchor="' + (anchor || 'middle') + '" font-size="9.5" fill="#404040">' + fmtAxis(v, ax.step / 10) + '</text>' : '';
+    };
+    if (d.kind === 'line' || d.kind === 'area') {
+      data.series.forEach(function (s, si) {
+        var color = XL_PALETTE[si % 8], pts = [];
+        s.values.forEach(function (v, i) { if (isFinite(v)) pts.push([x0 + band * (i + 0.5), y0 + h - val(v) * h, v]); });
+        if (!pts.length) return;
+        if (d.kind === 'area') {
+          out += '<path d="M' + pts[0][0] + ',' + zero + ' L' + pts.map(function (q) { return q[0] + ',' + q[1]; }).join(' L') + ' L' + pts[pts.length - 1][0] + ',' + zero + ' Z" fill="' + color + '" fill-opacity="' + (S > 1 ? 0.45 : 0.75) + '"/>';
+        } else {
+          out += '<polyline fill="none" stroke="' + color + '" stroke-width="2.25" stroke-linejoin="round" points="' + pts.map(function (q) { return q[0] + ',' + q[1]; }).join(' ') + '"/>';
+          pts.forEach(function (q, k) { out += '<circle cx="' + q[0] + '" cy="' + q[1] + '" r="3.2" fill="' + color + '" stroke="#fff" stroke-width="1"><title>' + esc(data.categories[k] + ' · ' + s.name + ': ' + fmtFull(q[2])) + '</title></circle>'; });
+        }
+        pts.forEach(function (q) { out += label(q[0], q[1] - 7, q[2]); });
+      });
+    } else {
+      var gap = band * 0.25, bw = (band - gap) / Math.max(S, 1);
+      data.series.forEach(function (s, si) {
+        var color = XL_PALETTE[si % 8];
+        s.values.forEach(function (v, i) {
+          if (!isFinite(v)) return;
+          var a = val(Math.max(v, 0)), b = val(Math.min(v, 0)), tip = '<title>' + esc(data.categories[i] + ' · ' + s.name + ': ' + fmtFull(v)) + '</title>';
+          if (horiz) {
+            var y = y0 + band * i + gap / 2 + bw * si, xa = x0 + b * w, xb = x0 + a * w;
+            out += '<rect x="' + xa + '" y="' + y + '" width="' + Math.max(1, xb - xa) + '" height="' + Math.max(1, bw - 1) + '" fill="' + color + '">' + tip + '</rect>';
+            out += label(v >= 0 ? xb + 3 : xa - 3, y + bw / 2 + 3, v, v >= 0 ? 'start' : 'end');
+          } else {
+            var x = x0 + band * i + gap / 2 + bw * si, ya = y0 + h - a * h, yb = y0 + h - b * h;
+            out += '<rect x="' + x + '" y="' + ya + '" width="' + Math.max(1, bw - 1) + '" height="' + Math.max(1, yb - ya) + '" fill="' + color + '">' + tip + '</rect>';
+            out += label(x + bw / 2, v >= 0 ? ya - 4 : yb + 11, v);
+          }
+        });
+      });
+    }
+    return out;
+  }
+
+  function pieSvg(d, data, p) {
+    var s = data.series[0] || { values: [] }, values = s.values.map(function (v) { return isFinite(v) ? Math.abs(v) : 0; });
+    var total = values.reduce(function (t, v) { return t + v; }, 0);
+    if (!total) return '<text x="' + (p.x + p.w / 2) + '" y="' + (p.y + p.h / 2) + '" text-anchor="middle" font-size="12" fill="#8A8886">No numbers to show</text>';
+    var cx = p.x + p.w / 2, cy = p.y + p.h / 2, r = Math.max(10, Math.min(p.w, p.h) / 2 - 6), ri = d.kind === 'doughnut' ? r * 0.55 : 0, a0 = -Math.PI / 2, out = '';
+    values.forEach(function (v, i) {
+      if (!v) return;
+      var a1 = a0 + v / total * Math.PI * 2, large = a1 - a0 > Math.PI ? 1 : 0, color = XL_PALETTE[i % 8];
+      var pt = function (rad, ang) { return (cx + rad * Math.cos(ang)) + ',' + (cy + rad * Math.sin(ang)); };
+      var path = values.filter(Boolean).length === 1
+        ? 'M' + (cx - r) + ',' + cy + ' a' + r + ',' + r + ' 0 1,0 ' + (2 * r) + ',0 a' + r + ',' + r + ' 0 1,0 ' + (-2 * r) + ',0'
+        : 'M' + pt(r, a0) + ' A' + r + ',' + r + ' 0 ' + large + ',1 ' + pt(r, a1) + (ri ? ' L' + pt(ri, a1) + ' A' + ri + ',' + ri + ' 0 ' + large + ',0 ' + pt(ri, a0) + ' Z' : ' L' + cx + ',' + cy + ' Z');
+      out += '<path d="' + path + '" fill="' + color + '" stroke="#fff" stroke-width="1.5"><title>' + esc(data.categories[i] + ': ' + fmtFull(s.values[i]) + ' (' + (v / total * 100).toFixed(1) + '%)') + '</title></path>';
+      var mid = (a0 + a1) / 2, pr = ri ? (r + ri) / 2 : r * 0.62, pct = v / total * 100;
+      if (pct >= 4 && d.labels !== false) out += '<text x="' + (cx + pr * Math.cos(mid)) + '" y="' + (cy + pr * Math.sin(mid) + 4) + '" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">' + Math.round(pct) + '%</text>';
+      a0 = a1;
+    });
+    if (ri) out += '<text x="' + cx + '" y="' + (cy + 5) + '" text-anchor="middle" font-size="13" font-weight="600" fill="#404040">' + fmtAxis(total, total / 100) + '</text>';
+    return out;
+  }
+
+  function kpiMarkup(d, W, Hh) {
+    var sheet = workbook().getSheetBySheetId(d.sheetId);
+    var v = num(sheet.getRange(d.r, d.c, 1, 1).getRawValues()[0][0]), delta = '';
+    if (d.cmp) {
+      var base = num(sheet.getRange(d.cmp.r, d.cmp.c, 1, 1).getRawValues()[0][0]);
+      if (isFinite(v) && isFinite(base) && base !== 0) {
+        var diff = v - base, pct = diff / Math.abs(base) * 100, good = d.good === 'down' ? diff <= 0 : diff >= 0;
+        delta = '<div class="ak-xkpi__delta ' + (good ? 'is-good' : 'is-bad') + '">' + (diff >= 0 ? '▲ ' : '▼ ') + Math.abs(pct).toFixed(1) + '%' +
+          '<span> vs ' + esc(d.cmpTitle || 'target') + ' ' + fmtAxis(base, Math.abs(base) / 100) + '</span></div>';
+      }
+    }
+    var size = Math.max(22, Math.min(44, Math.min(W / 7, Hh / 3)));
+    return '<div class="ak-xkpi"><div class="ak-xkpi__title">' + esc(d.title || 'KPI') + '</div>' +
+      '<div class="ak-xkpi__value" style="font-size:' + size + 'px">' + fmtFull(v) + '</div>' + delta + '</div>';
+  }
+
+  // ---------------------------------------------------------------- inserting
+  function selectionRect() {
     var wb = workbook(), sheet = wb.getActiveSheet(), sel = sheet.getSelection && sheet.getSelection();
     var range = sel && sel.getActiveRange && sel.getActiveRange();
-    var g = range && range.getRange ? range.getRange() : null;
-    if (!g) return { sheetId: sheet.getSheetId(), r: 0, c: 0, rows: 1, cols: 1 };
-    return { sheetId: sheet.getSheetId(), r: g.startRow, c: g.startColumn, rows: g.endRow - g.startRow + 1, cols: g.endColumn - g.startColumn + 1 };
+    var g = range && range.getRange ? range.getRange() : { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 };
+    return { sheet: sheet, sheetId: sheet.getSheetId(), r: g.startRow, c: g.startColumn, rows: g.endRow - g.startRow + 1, cols: g.endColumn - g.startColumn + 1 };
+  }
+
+  function guessChartTitle(b) {
+    var above = b.r > 0 ? cellText(b.sheetId, b.r - 1, b.c) : '';
+    if (above && isNaN(num(above))) return above;
+    // Like Excel: one series -> its name is the title; several series -> "Chart Title" (rename with the pencil).
+    var head = cellText(b.sheetId, b.r, b.c + b.cols - 1);
+    var labelCol = b.cols > 1 && isNaN(num(cellText(b.sheetId, b.r + 1, b.c)));
+    if (b.cols - (labelCol ? 1 : 0) === 1 && head && isNaN(num(head))) return head;
+    return 'Chart Title';
   }
 
   function cellText(sheetId, r, c) {
@@ -2681,183 +2928,159 @@
     return v == null ? '' : String(v).trim();
   }
 
-  /** KPI title: the text to the left of the cell, else the header above it. */
-  function guessTitle(b) {
-    var left = cellText(b.sheetId, b.r, b.c - 1);
-    if (left && isNaN(+left.replace(/,/g, ''))) {
-      var head = cellText(b.sheetId, b.r - 1, b.c) || cellText(b.sheetId, findHeaderRow(b), b.c);
-      return head && isNaN(+head.replace(/,/g, '')) ? left + ' · ' + head : left;
+  /** Position of a cell's left/top edge in drawing coordinates (these include the row and column headers). */
+  function cellOffset(sheet, r, c) {
+    var cfg = {}, x, y, i;
+    try { cfg = sheet.getSheet().getConfig() || {}; } catch (e) { /* defaults */ }
+    x = cfg.rowHeader && !cfg.rowHeader.hidden ? cfg.rowHeader.width || 46 : 0;
+    y = cfg.columnHeader && !cfg.columnHeader.hidden ? cfg.columnHeader.height || 20 : 0;
+    for (i = 0; i < c; i++) x += (sheet.getColumnWidth ? sheet.getColumnWidth(i) : 88);
+    for (i = 0; i < r; i++) y += (sheet.getRowHeight ? sheet.getRowHeight(i) : 24);
+    return { x: x, y: y };
+  }
+
+  /** Excel's Insert Chart dialog: one tile per chart type, each a live preview of the selected data. */
+  function openChartPicker() {
+    var b = selectionRect();
+    if (b.rows === 1 && b.cols === 1 && isNaN(num(b.sheet.getRange(b.r, b.c, 1, 1).getRawValues()[0][0]))) {
+      H.toast('info', 'Select the data first: labels in the first column, series names in the first row and numbers in the rest (for example A4:D7), or one number cell for a KPI card.');
+      return;
     }
-    var above = cellText(b.sheetId, b.r - 1, b.c);
-    return above && isNaN(+above.replace(/,/g, '')) ? above : sheetName(b.sheetId) + '!' + cellName(b.r, b.c);
-  }
-  function findHeaderRow(b) { for (var r = b.r - 1; r >= 0 && r >= b.r - 30; r--) { var t = cellText(b.sheetId, r, b.c); if (t && isNaN(+t.replace(/,/g, ''))) return r; } return -1; }
-
-  function addKpi() {
-    var b = selectionBlock();
-    var item = { id: H.uid('kp'), type: 'kpi', sheetId: b.sheetId, r: b.r, c: b.c, rows: 1, cols: 1, title: guessTitle(b), good: 'up' };
-    if (b.cols >= 2 || b.rows >= 2) item.cmp = b.cols >= 2 ? { r: b.r, c: b.c + 1 } : { r: b.r + 1, c: b.c };
-    if (item.cmp) item.cmpTitle = cellText(b.sheetId, findHeaderRow({ sheetId: b.sheetId, r: item.cmp.r, c: item.cmp.c }), item.cmp.c) || 'compared';
-    dashItems().push(item);
-    openDash(true);
-    setDirty(true);
-    H.toast('success', 'KPI card added from ' + cellName(b.r, b.c) + (item.cmp ? ' (compared with ' + cellName(item.cmp.r, item.cmp.c) + ')' : '') + '. Click its title to rename it.');
-  }
-
-  function addChart(kind) {
-    var b = selectionBlock();
-    if (b.rows < 2 && b.cols < 2) { H.toast('info', 'Select a block first: labels in the first column, series names in the first row, numbers in the rest (for example A4:D7).'); return; }
-    var item = { id: H.uid('ch'), type: 'chart', kind: kind || 'bar', sheetId: b.sheetId, r: b.r, c: b.c, rows: b.rows, cols: b.cols,
-      title: cellText(b.sheetId, b.r - 1, b.c) || cellText(b.sheetId, b.r, b.c) || 'Chart' };
-    dashItems().push(item);
-    openDash(true);
-    setDirty(true);
-    H.toast('success', 'Chart added from ' + cellName(b.r, b.c) + ':' + cellName(b.r + b.rows - 1, b.c + b.cols - 1) + '. Click its title to rename it.');
-  }
-
-  function openDash(open) {
-    state.dash.open = open === undefined ? !state.dash.open : open;
-    renderDash();
-    window.dispatchEvent(new Event('resize'));
-  }
-
-  /** Number from a cell value: numbers as they are, text like "1,23,456.50" parsed, other text (labels) -> NaN. */
-  function num(v) {
-    if (typeof v === 'number') return v;
-    if (v == null) return NaN;
-    var t = String(v).trim();
-    if (!/^[\s\-\u2212(]*[\u20B9$\u20AC]?\s*[\d.,]+\)?\s*%?$/.test(t)) return NaN;
-    var n = +t.replace(/[^0-9.]/g, '');
-    return /^[\s]*[-\u2212(]/.test(t) ? -n : n;
-  }
-
-  function fmtNum(n) {
-    if (!isFinite(n)) return '—';
-    var abs = Math.abs(n);
-    var digits = abs >= 1000 || Math.round(n) === n ? 0 : 2;
-    try { return n.toLocaleString(navigator.language || 'en-IN', { maximumFractionDigits: digits, minimumFractionDigits: digits }); } catch (e) { return n.toFixed(digits); }
-  }
-  function fmtShortNum(n) {
-    var a = Math.abs(n), s = n < 0 ? '-' : '';
-    if (a >= 1e7) return s + (a / 1e7).toFixed(a >= 1e8 ? 0 : 1) + ' Cr';
-    if (a >= 1e5) return s + (a / 1e5).toFixed(a >= 1e6 ? 0 : 1) + ' L';
-    if (a >= 1e3) return s + (a / 1e3).toFixed(0) + 'K';
-    return s + Math.round(a);
-  }
-
-  function readBlock(item) {
-    var sheet = workbook() && workbook().getSheetBySheetId(item.sheetId);
-    if (!sheet) return null;
-    return sheet.getRange(item.r, item.c, item.rows, item.cols).getRawValues();
-  }
-
-  function kpiHtml(item) {
-    var sheet = workbook().getSheetBySheetId(item.sheetId);
-    if (!sheet) return '';
-    var v = num(sheet.getRange(item.r, item.c, 1, 1).getRawValues()[0][0]);
-    var delta = '';
-    if (item.cmp) {
-      var base = num(sheet.getRange(item.cmp.r, item.cmp.c, 1, 1).getRawValues()[0][0]);
-      if (isFinite(v) && isFinite(base) && base !== 0) {
-        var d = v - base, pct = d / Math.abs(base) * 100, good = item.good === 'down' ? d <= 0 : d >= 0;
-        delta = '<div class="ak-kpi__delta ' + (good ? 'is-good' : 'is-bad') + '">' + (d >= 0 ? '▲ ' : '▼ ') +
-          fmtNum(Math.abs(pct)) + '% <span>vs ' + H.escapeHtml(item.cmpTitle || 'compared') + ' (' + fmtShortNum(base) + ')</span></div>';
-      }
-    }
-    return '<div class="ak-dcard ak-kpi" data-dash="' + item.id + '">' + dashHead(item) +
-      '<div class="ak-kpi__value" title="' + H.escapeHtml(sheetName(item.sheetId) + '!' + cellName(item.r, item.c)) + '">' + fmtNum(v) + '</div>' + delta + '</div>';
-  }
-
-  function chartHtml(item) {
-    var block = readBlock(item);
-    if (!block) return '';
-    var hasHeader = item.cols > 1 && block[0].slice(1).some(function (v) { return typeof v === 'string' && isNaN(num(v)); });
-    var hasLabels = item.cols > 1 && block.slice(hasHeader ? 1 : 0).some(function (r) { return typeof r[0] === 'string' && isNaN(num(r[0])); });
-    var rows = block.slice(hasHeader ? 1 : 0);
-    var labels = rows.map(function (r, i) { return hasLabels ? String(r[0] || '') : String(i + 1); });
-    var firstCol = hasLabels ? 1 : 0;
-    var series = [];
-    for (var c = firstCol; c < item.cols && series.length < 6; c++) {
-      series.push({ name: hasHeader ? String(block[0][c] || '') : 'Series ' + (series.length + 1), values: rows.map(function (r) { return num(r[c]); }) });
-    }
-    var W = 340, Hh = 170, L = 46, B = 24, T = 8, R = 8, w = W - L - R, h = Hh - T - B;
-    var all = []; series.forEach(function (s) { s.values.forEach(function (v) { if (isFinite(v)) all.push(v); }); });
-    var max = Math.max.apply(null, all.concat([0])), min = Math.min.apply(null, all.concat([0]));
-    if (max === min) max = min + 1;
-    var y = function (v) { return T + h - (v - min) / (max - min) * h; };
-    var svg = '<svg viewBox="0 0 ' + W + ' ' + Hh + '" class="ak-chart" role="img" aria-label="' + H.escapeHtml(item.title) + '">';
-    [0, 0.5, 1].forEach(function (t) {
-      var val = min + (max - min) * t, yy = y(val);
-      svg += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + yy + '" y2="' + yy + '" stroke="#E1DFDD"/>' +
-        '<text x="' + (L - 6) + '" y="' + (yy + 3) + '" text-anchor="end" font-size="9" fill="#605E5C">' + fmtShortNum(val) + '</text>';
+    var single = b.rows * b.cols <= 2;
+    var base = { sheetId: b.sheetId, r: b.r, c: b.c, rows: b.rows, cols: b.cols, title: guessChartTitle(b), labels: false, legend: true };
+    var tiles = CHART_TYPES.filter(function (t) { return single ? t[0] === 'kpi' || t[0] === 'column' : t[0] !== 'kpi' || b.rows * b.cols <= 2; }).map(function (t) {
+      var d = Object.assign({}, base, { kind: t[0] });
+      if (t[0] === 'kpi') prepareKpi(d, b);
+      var html;
+      try { html = chartMarkup(d, 220, 140, 'preview').replace(/<div class="ak-xchart__tools">[\s\S]*$/, ''); } catch (e) { html = '<div class="ak-xchart__err">' + esc(e.message) + '</div>'; }
+      return '<button class="ak-picker__tile" data-kind="' + t[0] + '"><span class="ak-picker__prev">' + html + '</span><span class="ak-picker__name">' + t[1] + '</span></button>';
+    }).join('');
+    var host = document.getElementById('ak-app');
+    var back = H.el('div', 'ak-modal');
+    back.innerHTML = '<div class="ak-modal__box ak-picker" role="dialog" aria-label="Insert Chart"><div class="ak-modal__title">Insert Chart</div>' +
+      '<div class="ak-picker__sub">Data: ' + esc(sheetName(b.sheetId) + '!' + cellName(b.r, b.c) + ':' + cellName(b.r + b.rows - 1, b.c + b.cols - 1)) + '</div>' +
+      '<div class="ak-picker__grid">' + tiles + '</div><div class="ak-modal__btns"><button class="ak-btn ak-btn--subtle" data-i="cancel">Cancel</button></div></div>';
+    var close = function () { if (back.parentNode) back.parentNode.removeChild(back); document.removeEventListener('keydown', onKey, true); };
+    var onKey = function (e) { if (e.key === 'Escape') close(); };
+    back.addEventListener('click', function (e) {
+      var tile = e.target.closest('.ak-picker__tile');
+      if (tile) { close(); insertChart(base, tile.getAttribute('data-kind'), b); return; }
+      if (e.target === back || e.target.closest('[data-i=cancel]')) close();
     });
-    if (min < 0) svg += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(0) + '" y2="' + y(0) + '" stroke="#8A8886"/>';
-    var n = labels.length, band = w / Math.max(n, 1);
-    if (item.kind === 'line') {
-      series.forEach(function (s, si) {
-        var pts = s.values.map(function (v, i) { return isFinite(v) ? (L + band * (i + 0.5)) + ',' + y(v) : null; }).filter(Boolean).join(' ');
-        svg += '<polyline fill="none" stroke="' + DASH_COLORS[si % 6] + '" stroke-width="2" points="' + pts + '"/>';
-        s.values.forEach(function (v, i) { if (isFinite(v)) svg += '<circle cx="' + (L + band * (i + 0.5)) + '" cy="' + y(v) + '" r="2.5" fill="' + DASH_COLORS[si % 6] + '"><title>' + H.escapeHtml(labels[i] + ' · ' + s.name + ': ' + fmtNum(v)) + '</title></circle>'; });
-      });
-    } else {
-      var bw = Math.max(2, (band * 0.72) / Math.max(series.length, 1));
-      series.forEach(function (s, si) {
-        s.values.forEach(function (v, i) {
-          if (!isFinite(v)) return;
-          var x = L + band * i + band * 0.14 + bw * si, y0 = y(Math.max(v, 0)), y1 = y(Math.min(v, 0));
-          svg += '<rect x="' + x + '" y="' + y0 + '" width="' + (bw - 1) + '" height="' + Math.max(1, y1 - y0) + '" fill="' + DASH_COLORS[si % 6] + '" rx="1.5"><title>' +
-            H.escapeHtml(labels[i] + ' · ' + s.name + ': ' + fmtNum(v)) + '</title></rect>';
-        });
-      });
+    document.addEventListener('keydown', onKey, true);
+    host.appendChild(back);
+  }
+
+  function prepareKpi(d, b) {
+    d.rows = 1; d.cols = 1; d.good = 'up';
+    var left = cellText(b.sheetId, b.r, b.c - 1), above = cellText(b.sheetId, b.r - 1, b.c);
+    d.title = left && isNaN(num(left)) ? left : (above && isNaN(num(above)) ? above : 'KPI');
+    if (b.cols >= 2 || b.rows >= 2) {
+      d.cmp = b.cols >= 2 ? { r: b.r, c: b.c + 1 } : { r: b.r + 1, c: b.c };
+      var head = '';
+      for (var r = d.cmp.r - 1; r >= 0 && r >= d.cmp.r - 30 && !head; r--) { var t = cellText(b.sheetId, r, d.cmp.c); if (t && isNaN(num(t))) head = t; }
+      d.cmpTitle = head || 'target';
     }
-    var every = Math.ceil(n / 8);
-    labels.forEach(function (lb, i) {
-      if (i % every) return;
-      svg += '<text x="' + (L + band * (i + 0.5)) + '" y="' + (Hh - 8) + '" text-anchor="middle" font-size="9" fill="#605E5C">' + H.escapeHtml(lb.length > 10 ? lb.slice(0, 9) + '…' : lb) + '</text>';
+  }
+
+  function insertChart(base, kind, b) {
+    var d = Object.assign({}, base, { kind: kind });
+    if (kind === 'kpi') prepareKpi(d, b);
+    var sheet = b.sheet, at = cellOffset(sheet, b.r, b.c + b.cols + 1);
+    var w = kind === 'kpi' ? 260 : 480, h = kind === 'kpi' ? 140 : 290;
+    at = freeSpot(sheet, at, w, h);
+    var res = null;
+    try {
+      res = sheet.addFloatDomToPosition({ componentKey: 'AKChart', allowTransform: true, data: d,
+        initPosition: { startX: at.x, endX: at.x + w, startY: at.y, endY: at.y + h } });
+    } catch (e) { reportError(e); return; }
+    if (!res) { H.toast('error', 'The chart could not be placed on this sheet.'); return; }
+    setDirty(true);
+    H.toast('success', (kind === 'kpi' ? 'KPI card' : 'Chart') + ' inserted. Drag it to move, drag a corner to resize; it follows the cells.');
+  }
+
+  /** Like Excel, a new chart goes next to its data; if another chart is already there, place it beside (or below) that one. */
+  function freeSpot(sheet, at, w, h) {
+    var boxes = Object.keys(charts.mounted).map(function (id) {
+      try { var f = sheet.getFloatDomById(id); return f && f.position; } catch (e) { return null; }
+    }).filter(Boolean);
+    for (var guard = 0; guard < 20; guard++) {
+      var hit = boxes.filter(function (q) {
+        var L = q.startX != null ? q.startX : q.left, T = q.startY != null ? q.startY : q.top;
+        var R = q.endX != null ? q.endX : L + q.width, B = q.endY != null ? q.endY : T + q.height;
+        return at.x < R && at.x + w > L && at.y < B && at.y + h > T;
+      })[0];
+      if (!hit) break;
+      var hitR = hit.endX != null ? hit.endX : (hit.startX != null ? hit.startX : hit.left) + hit.width;
+      var hitB = hit.endY != null ? hit.endY : (hit.startY != null ? hit.startY : hit.top) + hit.height;
+      at = hitR + 12 + w < 2000 ? { x: hitR + 12, y: at.y } : { x: at.x, y: hitB + 12 };
+    }
+    return at;
+  }
+
+  function chartSheet(id) {
+    var wb = workbook();
+    return wb.getSheets().filter(function (s) { try { return !!s.getFloatDomById(id); } catch (e) { return false; } })[0] || null;
+  }
+
+  function updateChartData(id, changes) {
+    var sheet = chartSheet(id), m = charts.mounted[id];
+    if (!sheet || !m) return;
+    var d = Object.assign({}, m.data, changes);
+    m.data = d;
+    try { sheet.updateFloatDom(id, { data: d }); } catch (e) { /* keep local copy */ }
+    drawChartSafe(id);
+    setDirty(true);
+  }
+
+  function onChartTool(act, id) {
+    var m = charts.mounted[id];
+    if (!m) return;
+    if (act === 'delete') {
+      var sheet = chartSheet(id);
+      if (sheet) { sheet.removeFloatDom(id); setDirty(true); }
+      return;
+    }
+    if (act === 'labels') updateChartData(id, { labels: !m.data.labels });
+    if (act === 'good') updateChartData(id, { good: m.data.good === 'down' ? 'up' : 'down' });
+    if (act === 'type') {
+      var order = CHART_TYPES.map(function (t) { return t[0]; }).filter(function (k) { return k !== 'kpi'; });
+      if (m.data.kind === 'kpi') return;
+      updateChartData(id, { kind: order[(order.indexOf(m.data.kind) + 1) % order.length] });
+      H.toast('info', 'Chart type: ' + CHART_TYPES.filter(function (t) { return t[0] === charts.mounted[id].data.kind; })[0][1]);
+    }
+    if (act === 'data') {
+      var b = selectionRect();
+      if (b.rows * b.cols < 2 && m.data.kind !== 'kpi') { H.toast('info', 'Select the new data block on the sheet first, then click this button.'); return; }
+      updateChartData(id, m.data.kind === 'kpi' ? { sheetId: b.sheetId, r: b.r, c: b.c } : { sheetId: b.sheetId, r: b.r, c: b.c, rows: b.rows, cols: b.cols });
+      H.toast('success', 'Chart data: ' + sheetName(b.sheetId) + '!' + cellName(b.r, b.c) + ':' + cellName(b.r + b.rows - 1, b.c + b.cols - 1));
+    }
+    if (act === 'title') {
+      var el = m.el;
+      var current = m.data.title || '';
+      var box = H.el('div', 'ak-xchart__rename');
+      box.innerHTML = '<input class="ak-input ak-input--sm" maxlength="80" value="' + esc(current) + '" aria-label="Chart title">';
+      el.appendChild(box);
+      var input = box.querySelector('input');
+      input.focus(); input.select();
+      var done = function (save) { if (save) updateChartData(id, { title: input.value.trim() }); if (box.parentNode) box.parentNode.removeChild(box); };
+      input.addEventListener('keydown', function (e) { e.stopPropagation(); if (e.key === 'Enter') done(true); if (e.key === 'Escape') done(false); });
+      input.addEventListener('blur', function () { done(true); });
+    }
+  }
+
+  /** Workbooks saved with the 2.0 dashboard strip: put each old card on its sheet as a floating chart. */
+  function migrateLegacyDash(dash) {
+    if (!dash || !dash.items || !dash.items.length) return;
+    dash.items.forEach(function (it, i) {
+      var wb = workbook(), sheet = wb.getSheetBySheetId(it.sheetId);
+      if (!sheet) return;
+      var d = { kind: it.type === 'kpi' ? 'kpi' : (it.kind === 'line' ? 'line' : 'column'), sheetId: it.sheetId, r: it.r, c: it.c, rows: it.rows, cols: it.cols,
+        title: it.title, labels: false, legend: true, good: it.good, cmp: it.cmp, cmpTitle: it.cmpTitle };
+      var at = cellOffset(sheet, it.r, it.c + it.cols + 1), w = d.kind === 'kpi' ? 260 : 480, h = d.kind === 'kpi' ? 140 : 290;
+      try { sheet.addFloatDomToPosition({ componentKey: 'AKChart', allowTransform: true, data: d, initPosition: { startX: at.x, endX: at.x + w, startY: at.y + i * 20, endY: at.y + i * 20 + h } }); }
+      catch (e) { /* skip */ }
     });
-    svg += '</svg>';
-    var legend = series.length > 1 || hasHeader ? '<div class="ak-legend">' + series.map(function (s, si) {
-      return '<span><i style="background:' + DASH_COLORS[si % 6] + '"></i>' + H.escapeHtml(s.name) + '</span>';
-    }).join('') + '</div>' : '';
-    return '<div class="ak-dcard ak-dchart" data-dash="' + item.id + '">' + dashHead(item) + svg + legend + '</div>';
-  }
-
-  function dashHead(item) {
-    var where = sheetName(item.sheetId) + '!' + cellName(item.r, item.c) + (item.rows > 1 || item.cols > 1 ? ':' + cellName(item.r + item.rows - 1, item.c + item.cols - 1) : '');
-    var tools = item.type === 'chart'
-      ? '<button class="ak-icon-btn ak-icon-btn--xs" data-act="dash-kind" data-id="' + item.id + '" title="Switch bar / line">' + H.icon(item.kind === 'line' ? 'table' : 'sliders') + '</button>'
-      : (item.cmp ? '<button class="ak-icon-btn ak-icon-btn--xs" data-act="dash-good" data-id="' + item.id + '" title="Higher is ' + (item.good === 'down' ? 'worse' : 'better') + ' (click to switch)">' + (item.good === 'down' ? '↓' : '↑') + '</button>' : '');
-    return '<div class="ak-dcard__head"><span class="ak-dcard__title" contenteditable="true" spellcheck="false" data-id="' + item.id + '" title="Click to rename">' + H.escapeHtml(item.title) + '</span>' +
-      '<span class="ak-dcard__src" data-act="dash-go" data-id="' + item.id + '" title="Go to the cells">' + H.escapeHtml(where) + '</span>' + tools +
-      '<button class="ak-icon-btn ak-icon-btn--xs" data-act="dash-remove" data-id="' + item.id + '" aria-label="Remove">' + H.icon('x') + '</button></div>';
-  }
-
-  function renderDash() {
-    if (!ui.dash) return;
-    ui.app.classList.toggle('has-dash', !!state.dash.open);
-    ui.dashToggle && ui.dashToggle.classList.toggle('is-active', !!state.dash.open);
-    if (!state.dash.open) { ui.dash.hidden = true; return; }
-    ui.dash.hidden = false;
-    var items = dashItems().filter(function (it) { return workbook() && workbook().getSheetBySheetId(it.sheetId); });
-    var cards = items.map(function (it) { try { return it.type === 'kpi' ? kpiHtml(it) : chartHtml(it); } catch (e) { return ''; } }).join('');
-    ui.dash.innerHTML = '<div class="ak-dash__cards">' + (cards || '<div class="ak-dash__empty"><b>Dashboard</b><br>Select a cell (or a value and the cell to compare with) and click <b>+ KPI</b>; select a block with labels and numbers and click <b>+ Bar</b> or <b>+ Line</b>. Cards update when the cells change.</div>') +
-      '</div><div class="ak-dash__tools">' +
-      '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="dash-kpi">' + H.icon('sigma') + '<span>+ KPI</span></button>' +
-      '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="dash-bar">' + H.icon('sliders') + '<span>+ Bar</span></button>' +
-      '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="dash-line">' + H.icon('link') + '<span>+ Line</span></button></div>';
-  }
-
-  var scheduleDash = H.debounce(function () { if (state.dash.open) guard(renderDash)(); }, 300);
-
-  function onDashClick(act, id) {
-    var item = dashItems().filter(function (x) { return x.id === id; })[0];
-    if (act === 'dash-remove' && item) { state.dash.items = dashItems().filter(function (x) { return x !== item; }); setDirty(true); renderDash(); }
-    if (act === 'dash-kind' && item) { item.kind = item.kind === 'line' ? 'bar' : 'line'; setDirty(true); renderDash(); }
-    if (act === 'dash-good' && item) { item.good = item.good === 'down' ? 'up' : 'down'; setDirty(true); renderDash(); }
-    if (act === 'dash-go' && item) {
-      var wb = workbook(), sheet = wb.getSheetBySheetId(item.sheetId);
-      if (sheet) { wb.setActiveSheet(sheet); try { sheet.getRange(item.r, item.c, item.rows, item.cols).activate(); } catch (e) { /* optional */ } }
-    }
   }
 
   // =====================================================================================
@@ -3579,8 +3802,7 @@
       }),
       joins: joins,
       recons: recons,
-      slicers: Object.keys(state.slicers).map(function (k) { return state.slicers[k]; }),
-      dash: state.dash
+      slicers: Object.keys(state.slicers).map(function (k) { return state.slicers[k]; })
     };
     var linked = sources.map(function (s) { return s.tableCaption; })
       .filter(function (v, i, a) { return a.indexOf(v) === i; }).join(', ');
@@ -3610,8 +3832,7 @@
     (env.joins || []).forEach(function (j) { state.joins[j.sheetId] = j; });
     state.slicers = {};
     (env.slicers || []).forEach(function (p) { state.slicers[p.id] = p; });
-    state.dash = env.dash && env.dash.items ? env.dash : { open: false, items: [] };
-    setTimeout(guard(renderDash), 700);
+    if (env.dash && env.dash.items && env.dash.items.length) setTimeout(guard(function () { migrateLegacyDash(env.dash); setDirty(true); }), 700);
     (env.recons || []).forEach(function (r) { state.recons[r.sheetId] = r; });
     renderSources(); renderBarSources();
     setTimeout(function () { state.dirty = true; setDirty(false); }, 450);
@@ -3890,7 +4111,7 @@
   window.ShowToast = guard(function (level, message) { H.toast(level, message); });
 
   // Exposed for automated tests only.
-  window.AKWorkbookDebug = { budgetDiff: budgetDiff, state: state, diffSource: diffSource, saveToBC: saveToBC, updateRegionBar: updateRegionBar, buildXlsx: buildXlsx, runJoin: runJoin, runRecon: runRecon, importXlsxBuffer: importXlsxBuffer };
+  window.AKWorkbookDebug = { replaceWorkbook: replaceWorkbook, budgetDiff: budgetDiff, state: state, diffSource: diffSource, saveToBC: saveToBC, updateRegionBar: updateRegionBar, buildXlsx: buildXlsx, runJoin: runJoin, runRecon: runRecon, importXlsxBuffer: importXlsxBuffer };
 
   // =====================================================================================
   // Boot

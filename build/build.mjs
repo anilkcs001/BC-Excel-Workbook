@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, renameSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 const js = '../ControlAddin/scripts/vendor';
 const css = '../ControlAddin/stylesheets/vendor';
 mkdirSync(js, { recursive: true }); mkdirSync(css, { recursive: true });
@@ -13,6 +13,6 @@ const LABELS = { 'Paste Value': 'Paste Values', 'Paste Format': 'Paste Formattin
 let bundle = readFileSync(`${js}/univer.bundle.js`, 'utf8');
 for (const [from, to] of Object.entries(LABELS)) bundle = bundle.replace(`"${from}"`, `"${to}"`);
 writeFileSync(`${js}/univer.bundle.js`, bundle);
-copyFileSync(`${js}/univer.bundle.css`, `${css}/univer.bundle.css`);
+renameSync(`${js}/univer.bundle.css`, `${css}/univer.bundle.css`);
 copyFileSync('node_modules/exceljs/dist/exceljs.min.js', `${js}/exceljs.min.js`);
 console.log('Vendor bundle built.');

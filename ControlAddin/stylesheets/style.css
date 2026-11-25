@@ -837,29 +837,35 @@ html, body, #controlAddIn, .ak-host {
 .ak-rbar__hint { color: var(--ak-faint); font-size: 11.5px; margin-right: 4px; }
 @media (max-width: 1100px) { .ak-rbar__hint { display: none; } }
 
-/* ------------------------------------------------------------------ Stage 7: dashboard strip */
-.ak-dash { flex: none; display: flex; gap: 10px; align-items: stretch; padding: 10px 12px; background: #f7f8fa; border-bottom: 1px solid var(--ak-line);
-  max-height: 260px; overflow: hidden; }
-.ak-dash[hidden] { display: none; }
-.ak-dash__cards { flex: 1; display: flex; gap: 10px; overflow-x: auto; min-width: 0; padding-bottom: 2px; align-items: flex-start; }
-.ak-dash__tools { display: flex; flex-direction: column; gap: 4px; flex: none; }
-.ak-dash__empty { font-size: 12.5px; color: var(--ak-muted); line-height: 1.5; padding: 6px 4px; max-width: 520px; }
-.ak-dash__empty b { color: var(--ak-text); }
-.ak-dcard { flex: none; background: #fff; border: 1px solid var(--ak-line); border-radius: 8px; padding: 8px 10px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
-.ak-dcard__head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
-.ak-dcard__title { font-size: 12.5px; font-weight: 600; color: var(--ak-text-2); outline: none; border-radius: 3px; padding: 0 2px; min-width: 20px; }
-.ak-dcard__title:focus { background: var(--ak-accent-soft); }
-.ak-dcard__src { font-size: 10.5px; color: var(--ak-faint); cursor: pointer; margin-left: auto; white-space: nowrap; }
-.ak-dcard__src:hover { color: var(--ak-accent); text-decoration: underline; }
-.ak-icon-btn--xs { width: 20px; height: 20px; font-size: 12px; }
-.ak-icon-btn--xs .ak-ico { width: 13px; height: 13px; }
-.ak-kpi { width: 220px; display: flex; flex-direction: column; }
-.ak-kpi__value { font-size: 28px; font-weight: 600; color: var(--ak-text); letter-spacing: -.5px; margin: 6px 0 4px; font-variant-numeric: tabular-nums; }
-.ak-kpi__delta { font-size: 12px; font-weight: 600; }
-.ak-kpi__delta span { font-weight: 400; color: var(--ak-muted); }
-.ak-kpi__delta.is-good { color: #0e700e; }
-.ak-kpi__delta.is-bad { color: #a4262c; }
-.ak-dchart { width: 360px; }
-.ak-chart { width: 100%; height: auto; display: block; }
-.ak-legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--ak-muted); margin-top: 2px; }
-.ak-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+/* ------------------------------------------------------------------ Stage 7: charts on the sheet (like Excel) */
+/* Excel chart area: white, thin grey border, Calibri. Univer's float-DOM frame handles drag and resize. */
+.ak-xchart { position: relative; width: 100%; height: 100%; box-sizing: border-box; overflow: hidden; background: #fff;
+  border: 1px solid #d9d9d9; font-family: Calibri, 'Segoe UI', Arial, sans-serif; color: #595959; cursor: move; user-select: none; }
+.ak-xchart__svg { display: block; }
+.ak-xchart__err { padding: 12px; font-size: 12px; color: #a4262c; }
+.ak-xchart__tools { position: absolute; top: 4px; right: 4px; display: none; gap: 2px; padding: 2px; background: #fff;
+  border: 1px solid #d9d9d9; border-radius: 4px; box-shadow: 0 2px 6px rgba(0,0,0,.12); }
+.ak-xchart:hover .ak-xchart__tools { display: flex; }
+.ak-xchart__tools button { width: 24px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 3px;
+  background: transparent; color: #444; font: 600 10.5px 'Segoe UI', sans-serif; cursor: pointer; }
+.ak-xchart__tools button:hover { background: #e9f5ee; color: var(--ak-accent); }
+.ak-xchart__tools .ak-ico { width: 14px; height: 14px; }
+.ak-xchart__rename { position: absolute; top: 6px; left: 8px; right: 8px; z-index: 2; }
+.ak-xchart__rename input { width: 100%; box-sizing: border-box; }
+/* KPI card */
+.ak-xkpi { height: 100%; box-sizing: border-box; padding: 14px 16px; display: flex; flex-direction: column; justify-content: center; border-left: 4px solid var(--ak-accent); }
+.ak-xkpi__title { font-size: 13px; color: #595959; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ak-xkpi__value { font-weight: 600; color: #262626; line-height: 1.15; margin: 4px 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ak-xkpi__delta { font-size: 12.5px; font-weight: 600; }
+.ak-xkpi__delta span { font-weight: 400; color: #7f7f7f; }
+.ak-xkpi__delta.is-good { color: #0e700e; }
+.ak-xkpi__delta.is-bad { color: #c00000; }
+/* Insert Chart dialog */
+.ak-modal__box.ak-picker { width: min(760px, calc(100% - 32px)); }
+.ak-picker__sub { font-size: 12px; color: var(--ak-muted); margin-bottom: 12px; }
+.ak-picker__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; max-height: 60vh; overflow: auto; }
+.ak-picker__tile { display: flex; flex-direction: column; align-items: stretch; padding: 6px; border: 1px solid var(--ak-line); border-radius: 6px; background: #fff; cursor: pointer; text-align: left; }
+.ak-picker__tile:hover, .ak-picker__tile:focus-visible { border-color: var(--ak-accent); box-shadow: 0 0 0 2px #cde8d8; outline: none; }
+.ak-picker__prev { display: block; height: 140px; overflow: hidden; pointer-events: none; }
+.ak-picker__prev .ak-xkpi { height: 140px; }
+.ak-picker__name { font-size: 12.5px; font-weight: 600; color: var(--ak-text); padding: 6px 2px 0; }

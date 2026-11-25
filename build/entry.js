@@ -13,6 +13,9 @@ import { UniverSheetsFindReplacePreset } from '@univerjs/preset-sheets-find-repl
 import sheetsFindEnUS from '@univerjs/preset-sheets-find-replace/locales/en-US';
 import { UniverSheetsDataValidationPreset } from '@univerjs/preset-sheets-data-validation';
 import sheetsDvEnUS from '@univerjs/preset-sheets-data-validation/locales/en-US';
+import { UniverSheetsDrawingPreset } from '@univerjs/preset-sheets-drawing';
+import sheetsDrawingEnUS from '@univerjs/preset-sheets-drawing/locales/en-US';
+import * as React from 'react';
 
 import '@univerjs/preset-sheets-core/lib/index.css';
 import '@univerjs/preset-sheets-filter/lib/index.css';
@@ -20,12 +23,13 @@ import '@univerjs/preset-sheets-sort/lib/index.css';
 import '@univerjs/preset-sheets-conditional-formatting/lib/index.css';
 import '@univerjs/preset-sheets-find-replace/lib/index.css';
 import '@univerjs/preset-sheets-data-validation/lib/index.css';
+import '@univerjs/preset-sheets-drawing/lib/index.css';
 
 export function create(containerId) {
   return createUniver({
     locale: LocaleType.EN_US,
     locales: {
-      [LocaleType.EN_US]: mergeLocales(sheetsCoreEnUS, sheetsFilterEnUS, sheetsSortEnUS, sheetsCfEnUS, sheetsFindEnUS, sheetsDvEnUS),
+      [LocaleType.EN_US]: mergeLocales(sheetsCoreEnUS, sheetsFilterEnUS, sheetsSortEnUS, sheetsCfEnUS, sheetsFindEnUS, sheetsDvEnUS, sheetsDrawingEnUS),
     },
     presets: [
       UniverSheetsCorePreset({ container: containerId }),
@@ -34,7 +38,10 @@ export function create(containerId) {
       UniverSheetsConditionalFormattingPreset(),
       UniverSheetsFindReplacePreset(),
       UniverSheetsDataValidationPreset(),
+      // Floating objects over cells (Stage 7 charts and KPI cards): movable, resizable, saved in the snapshot.
+      UniverSheetsDrawingPreset(),
     ],
   });
 }
-export { LocaleType };
+// React is exposed so the add-in can register its chart component for the floating objects.
+export { LocaleType, React };

@@ -316,6 +316,7 @@
     calendar: '<rect x="3" y="4.5" width="14" height="12.5" rx="2"/><path d="M3 8.5h14M7 3v3M13 3v3"/>',
     pencil: '<path d="M13.5 3.5l3 3L7 16H4v-3z"/><path d="M11.5 5.5l3 3"/>',
     lock: '<rect x="4.5" y="9" width="11" height="8" rx="1.5"/><path d="M7 9V6.5a3 3 0 0 1 6 0V9"/>',
+    chart: '<path d="M3 17h14"/><rect x="4.5" y="9" width="3" height="6"/><rect x="8.5" y="5" width="3" height="10"/><rect x="12.5" y="11" width="3" height="4"/>',
     merge: '<circle cx="5" cy="5" r="2"/><circle cx="5" cy="15" r="2"/><circle cx="15" cy="10" r="2"/><path d="M7 5h1.5a3 3 0 0 1 3 3v0a2 2 0 0 0 2 2h0M7 15h1.5a3 3 0 0 0 3-3v0a2 2 0 0 1 2-2"/>'
   };
   H.icon = function (name) {

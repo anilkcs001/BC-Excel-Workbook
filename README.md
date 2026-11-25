@@ -13,7 +13,7 @@ It puts a full spreadsheet inside Business Central, on a page that is **only the
 - **combine** two sheets on matching keys (Phase 2);
 - **reconcile** books against a bank statement, GSTR-2B or a party ledger (Phase 3), with an exceptions-first result sheet and a live summary sheet;
 - **work on journal and document lines** (Stage 2): *Edit in Excel Workbook* on the General Journal, Item Journal, Sales Order and Purchase Order pages opens the lines as a region; type or paste many lines and BC fills the template, batch or document, the next Line No. and the journal defaults, like a new line on the page. The same four appear as *Quick start* tiles in the region panel;
-- **show KPI cards and charts** (Stage 7) in a Dashboard strip above the sheet, drawn from cells and updated when they change;
+- **insert charts and KPI cards on the sheet like Excel** (Stage 7): column, bar, line, area, pie and doughnut charts that float over the cells, move and resize, and update when the cells change;
 - **use BC numbers inside formulas** (Stage 6): `=BCGLSUM("40000..49999", B2)`, `=BCBUDGET(...)`, `=BCSUM(...)`, `=BCCOUNT(...)`, `=BCVALUE(...)` calculate live from BC and follow a period picker;
 - **open BC from any cell** (Stage 5): Ctrl+click a region row to open its record, or a budget / last-year amount to open the G/L budget entries or G/L entries behind it;
 - **pick a period once for the whole sheet** (Stage 4): a *period picker* cell (This Month, Year to Date, Last Fiscal Year...) drives every region whose date filter points to it;
@@ -22,7 +22,7 @@ It puts a full spreadsheet inside Business Central, on a page that is **only the
 
 Every command (AutoSave, Save to BC, Save, Refresh, Import, Export, Combine, Reconcile, Insert region) sits in the add-in's own toolbar, with region commands also on the right-click menu and on a region bar that appears when a cell inside a region is selected. The page has no BC fields or action bar. The look follows Excel: Excel green accent, Calibri 11, and regions styled like an Excel table (blue header, thin border, banded rows).
 
-Delivered: Phase 1 (sheet, data explorer, save, refresh, Excel I/O), Phase 2 (Combine), Phase 3 (Reconcile), Stage 1 of the advanced features (editable regions with write-back) Stage 1b (regions anywhere on a sheet, cell-driven filters, Editing switch, Excel look), Stage 2 (journal and document lines), Stage 3 (budget grid), Stage 4 (period picker), Stage 5 (drill-down), Stage 6 (BC functions in formulas) and Stage 7 (KPI cards and charts). All planned stages are done. Next stages: journal and document lines, budget grid, cell-driven filters (slicers), drill-down, BC formulas in cells, KPI cards and charts.
+Delivered: Phase 1 (sheet, data explorer, save, refresh, Excel I/O), Phase 2 (Combine), Phase 3 (Reconcile), Stage 1 of the advanced features (editable regions with write-back) Stage 1b (regions anywhere on a sheet, cell-driven filters, Editing switch, Excel look), Stage 2 (journal and document lines), Stage 3 (budget grid), Stage 4 (period picker), Stage 5 (drill-down), Stage 6 (BC functions in formulas) and Stage 7 (charts and KPI cards on the sheet). All planned stages are done.
 
 ## 2. Object list
 
@@ -59,6 +59,7 @@ ID range in app.json: 89000–89049 (room for later phases).
 | Base Application / System Application v27 | `Temp Blob`, `Base64 Convert`, `AllObjWithCaption`, `Field` | Microsoft |
 | [Univer](https://github.com/dream-num/univer) 1.2.0 (bundled) | Spreadsheet engine and UI | Apache-2.0 |
 | [ExcelJS](https://github.com/exceljs/exceljs) 4.4.0 (bundled) | .xlsx read/write in the browser | MIT |
+| Univer drawing add-on (`@univerjs/preset-sheets-drawing` 1.2.0, bundled) | Floating charts and KPI cards over the cells | Apache-2.0 |
 
 No Azure services, no external API calls, no CDN at runtime. All scripts ship inside the .app.
 
@@ -119,10 +120,14 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 - **Combine and Reconcile** read the first region of a sheet (its block only, without the BC Status column).
 - **Screenshots** (mock data): [panel with a cell filter](docs/images/stage1b-r1-panel.jpg) · [region at A4 with title, filter cell and totals](docs/images/stage1b-r3-two-regions.jpg) · [right-click menu](docs/images/stage1b-r4-context.jpg) · [Editing switched off](docs/images/stage1b-r5-editing-off.jpg).
 
-**KPI cards and charts (Stage 7, main.js "dashboard strip" section).**
-- **Dashboard** in the toolbar opens a strip above the sheet. *+ KPI* makes a card from the selected cell; select two cells (value and the one to compare with, side by side or one under the other) to show the change in % with a green/red arrow (the ↑/↓ button sets whether higher is better). *+ Bar* / *+ Line* make a chart from the selected block: first column = labels, first row = series names, the rest = numbers. The same is on the right-click menu (*Add KPI card from selection*, *Add chart from selection*).
-- Cards and charts read the cells directly (also formula results, so BC functions and regions feed them) and redraw after every change. Titles are editable in place; the cell address on each card jumps to its cells. Charts are drawn as SVG (up to 6 series, Excel colours, Indian short numbers: K, L, Cr). The dashboard is saved with the workbook. It is not part of the .xlsx export.
-- **Screenshot** (mock data): [KPI cards and a bar chart over the P&L snapshot](docs/images/stage7-k1-dashboard.jpg).
+**Charts and KPI cards on the sheet (Stage 7, main.js "Excel-style charts" section).**
+- Works like Excel: select the data (labels in the first column, series names in the first row, numbers in the rest), then **Insert chart** in the toolbar or right-click > *Insert chart from selection*. The *Insert Chart* dialog shows a live preview of every type: Clustered Column, Clustered Bar, Line with Markers, Area, Pie, Doughnut and KPI Card.
+- The chart is placed next to its data as a floating object over the cells (Univer drawing add-on, float DOM). Drag it to move it; drag a handle to resize it; it stays anchored to the cells. A new chart never lands on top of another one.
+- Excel look: white chart area with thin border, Calibri, title on top, light gridlines, "nice" axis steps (1, 2, 5 × 10ⁿ) with Indian short numbers (K, L, Cr), legend at the bottom (wraps), Office colours, tooltips with the full number.
+- Hover a chart for its toolbar: change type, data labels on/off, *use selected cells* (point the chart at new data), rename, delete. KPI cards have ↑/↓ for "higher is better / worse".
+- **KPI card:** select one number cell, or the value plus the cell to compare with (side by side or one under the other). It shows the big number and the % change with a green or red arrow.
+- Charts read the cells directly, also formula results, so regions, budget grids and BC functions feed them; they redraw after every change. They are saved in the workbook snapshot. Workbooks saved with the 2.0 Dashboard strip get their cards placed on the sheet when opened.
+- **Screenshots** (mock data): [Insert Chart dialog](docs/images/stage7-c0-insert-chart.png), [column chart, doughnut and KPI card on the sheet](docs/images/stage7-c1-charts.png), [P&L chart and KPI cards fed by BC functions](docs/images/stage7-c2-pl-charts.png).
 
 **BC functions in formulas (Stage 6, codeunit 89008 "AK Workbook Formulas").**
 
@@ -190,15 +195,17 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 - **Regions.** One auto-filter per sheet (Univer limit), so only a region that is alone on its sheet gets filter buttons. Combine and Reconcile use the first region of a sheet. Cell filters use the cell's displayed text, so format date cells the way BC filters expect (for example `dd-mm-yy`).
 - **Combine and Reconcile run in the browser** on the rows already in the sheets (comfortably up to about 100,000 rows per side), and they find columns by header name. If a header is renamed, Refresh reports the missing column; run the template again.
 - **No close prompt.** BC cannot ask "close without saving?" on a `UserControlHost` page. Keep AutoSave on, or save before leaving.
-- **Excel features not covered:** VBA/macros, pivot tables, charts, and Excel data connections. Conditional formatting and data validation work inside BC but are not written to the exported .xlsx.
+- **Charts stay in BC.** Charts and KPI cards are saved with the workbook but are not written to the exported .xlsx (ExcelJS cannot write charts), and charts in an imported .xlsx are not read. Up to 8 series per chart; no secondary axis, stacked or combo charts.
+- **Excel features not covered:** VBA/macros, pivot tables and Excel data connections. Conditional formatting and data validation work inside BC but are not written to the exported .xlsx.
 - **Excel import** brings values, formulas, styles, widths, merges and freeze panes; it ignores charts, images, comments and theme colours.
-- **Size.** The spreadsheet engine is about 12.5 MB (about 3 MB compressed). The first open per browser session takes a moment, then it is cached. Loads above roughly 50,000 rows × 15 columns get slow in the browser; use filters.
+- **Size.** The spreadsheet engine is about 12.9 MB (about 3 MB compressed). The first open per browser session takes a moment, then it is cached. Loads above roughly 50,000 rows × 15 columns get slow in the browser; use filters.
 - **Not compiled in this hand-off.** The AL targets runtime 16 but was not compiled here, because no AL compiler was available. The JavaScript was tested end to end in Chromium against a mocked BC bridge. Run *AL: Package* once and fix anything the compiler flags.
 
 ## 7. Change log
 
 | Version | Date | Change |
 |---|---|---|
+| 2.1.0.0 | 2026-11-26 | Stage 7 reworked to work like Excel: **Insert chart** (toolbar and right-click) with an Insert Chart dialog showing live previews; charts and KPI cards float on the sheet over the cells, move and resize, and are saved in the workbook; Excel chart design (title, gridlines, nice axis, legend, Office colours, data labels); column, bar, line, area, pie, doughnut; chart toolbar (type, labels, change data, rename, delete). The Dashboard strip is removed; old dashboard cards are moved onto the sheet. Univer drawing add-on bundled, all Univer packages pinned to 1.2.0. |
 | 2.0.0.0 | 2026-11-26 | Stage 7 **KPI cards and charts**: Dashboard strip above the sheet; KPI cards from a cell with % change against a second cell (higher/lower is better); bar and line charts from a block of cells; live redraw on every change including formula results; editable titles; saved with the workbook. All planned stages (1–7) complete. |
 | 1.9.0.0 | 2026-11-26 | Stage 6 **BC functions in formulas**: BCGLSUM, BCBUDGET, BCSUM, BCCOUNT, BCVALUE as async spreadsheet functions, batched to AL, cached until Refresh, period names and pickers understood; errors as `#BC!` text. New codeunit 89008. |
 | 1.8.0.0 | 2026-11-26 | Stage 5 **drill-down**: Ctrl+click, right-click *Open in Business Central* or region bar *Open* opens the record of a region row (Page Management) or, in a budget grid, the G/L Budget Entries / G/L Entries behind an amount (totaling accounts included). New codeunit 89007. |
