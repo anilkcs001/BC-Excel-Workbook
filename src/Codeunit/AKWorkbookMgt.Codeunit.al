@@ -31,6 +31,7 @@ codeunit 89001 "AK Workbook Mgt"
         Workbook: Record "AK Workbook";
         DataService: Codeunit "AK Workbook Data Service";
         WorkbookLines: Codeunit "AK Workbook Lines";
+        WorkbookBudget: Codeunit "AK Workbook Budget";
         Config: JsonObject;
         AutoRegion: JsonObject;
         Result: Text;
@@ -41,6 +42,7 @@ codeunit 89001 "AK Workbook Mgt"
             Config.Add('description', Workbook.Description);
         end;
         Config.Add('quickStarts', WorkbookLines.GetQuickStartsJson());
+        Config.Add('budget', WorkbookBudget.GetSetupJson());
         if AutoRegionJson <> '' then
             if AutoRegion.ReadFrom(AutoRegionJson) then
                 Config.Add('autoRegion', AutoRegion);

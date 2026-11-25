@@ -564,7 +564,8 @@ html, body, #controlAddIn, .ak-host {
 .ak-view { display: none; flex-direction: column; min-height: 0; flex: 1 1 auto; }
 .ak-panel[data-view="data"] .ak-view[data-view="data"],
 .ak-panel[data-view="combine"] .ak-view[data-view="combine"],
-.ak-panel[data-view="recon"] .ak-view[data-view="recon"] { display: flex; }
+.ak-panel[data-view="recon"] .ak-view[data-view="recon"],
+.ak-panel[data-view="budget"] .ak-view[data-view="budget"] { display: flex; }
 
 .ak-step__sub { margin: 12px 0 6px; color: var(--ak-muted); font-size: 12.5px; }
 .ak-step__label .ak-step__meta { display: flex; gap: 2px; }

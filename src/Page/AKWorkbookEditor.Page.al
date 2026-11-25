@@ -106,6 +106,7 @@ page 89001 "AK Workbook Editor"
     var
         DataService: Codeunit "AK Workbook Data Service";
         WriteService: Codeunit "AK Workbook Write Service";
+        BudgetService: Codeunit "AK Workbook Budget";
         WorkbookMgt: Codeunit "AK Workbook Mgt";
         PayloadBuilder: TextBuilder;
         WorkbookCode: Code[20];
@@ -177,6 +178,10 @@ page 89001 "AK Workbook Editor"
                 end;
             'write':
                 WriteToBC(Payload);
+            'budget':
+                LoadBudget(Payload);
+            'budgetwrite':
+                WriteBudget(Payload);
             'export':
                 begin
                     Workbook.Get(WorkbookCode);
@@ -194,6 +199,41 @@ page 89001 "AK Workbook Editor"
             exit;
         end;
         SendPayload('writeresult', WriteService.ApplyChanges(Payload));
+    end;
+
+    /// <summary>Stage 3: builds a budget grid (read only, so it can run inside a TryFunction).</summary>
+    local procedure LoadBudget(Payload: Text)
+    var
+        Grid: Text;
+    begin
+        ClearLastError();
+        if TryBuildBudget(Payload, Grid) then
+            SendPayload('budgetdata', Grid)
+        else
+            SendPayload('budgetdata', BudgetService.BuildErrorResponse(Payload, GetLastErrorText()));
+    end;
+
+    /// <summary>Stage 3: saves changed budget cells (own transaction per cell) and sends the results back.</summary>
+    local procedure WriteBudget(Payload: Text)
+    begin
+        ClearLastError();
+        if not TryCheckBudgetWrite(Payload) then begin
+            SendPayload('budgetresult', BudgetService.BuildErrorResponse(Payload, GetLastErrorText()));
+            exit;
+        end;
+        SendPayload('budgetresult', BudgetService.WriteChanges(Payload));
+    end;
+
+    [TryFunction]
+    local procedure TryBuildBudget(Payload: Text; var Grid: Text)
+    begin
+        Grid := BudgetService.BuildGrid(Payload);
+    end;
+
+    [TryFunction]
+    local procedure TryCheckBudgetWrite(Payload: Text)
+    begin
+        BudgetService.CheckWrite(Payload);
     end;
 
     [TryFunction]

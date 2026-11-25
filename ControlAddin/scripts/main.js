@@ -35,6 +35,7 @@
     autosaveTimer: null,
     importMode: 'replace',
     pending: {},            // requestId -> { source, columns, rows, resolve, reject }
+    budgetPending: {},      // budget load requestId -> { source, resolve, reject }
     writes: {},             // write requestId -> { source, changes, resolve }
     applying: 0,            // > 0 while the add-in itself changes cells (not a user edit)
     requestSeq: 0,
@@ -90,7 +91,7 @@
       '  <div class="ak-progress" id="ak-progress" hidden><div class="ak-progress__bar" id="ak-progress-bar"></div></div>' +
       '  <div class="ak-body">' +
       '    <main class="ak-sheet" id="ak-sheet"></main>' +
-      '    <aside class="ak-panel" id="ak-panel" data-view="data">' + dataViewHtml() + combineViewHtml() + reconViewHtml() + '</aside>' +
+      '    <aside class="ak-panel" id="ak-panel" data-view="data">' + dataViewHtml() + combineViewHtml() + reconViewHtml() + budgetViewHtml() + '</aside>' +
       '  </div>' +
       '  <div class="ak-toasts" id="ak-toasts" aria-live="polite"></div>' +
       '  <div class="ak-boot" id="ak-boot"><div class="ak-spinner"></div><div>Starting spreadsheet&hellip;</div></div>' +
@@ -98,7 +99,8 @@
 
     var ids = ['app', 'sheet', 'panel', 'dirty', 'title', 'code', 'file', 'bar-sources', 'progress', 'progress-bar', 'boot',
       'table-search', 'table-results', 'table-picked', 'step-fields', 'field-search', 'field-list', 'field-count',
-      'max-rows', 'sheet-name', 'load', 'load-hint', 'source-list', 'edit', 'edit-wrap', 'edit-why', 'regionbar', 'dest-cell', 'dest-wrap', 'region-target', 'load-label', 'quick', 'write', 'write-count',
+      'max-rows', 'sheet-name', 'load', 'load-hint', 'source-list', 'edit', 'edit-wrap', 'edit-why', 'regionbar', 'dest-cell', 'dest-wrap', 'region-target', 'load-label', 'quick',
+      'b-name', 'b-start', 'b-periods', 'b-acc', 'b-d1', 'b-d2', 'b-d1cap', 'b-d2cap', 'b-ly', 'b-dest-wrap', 'b-dest-cell', 'b-why', 'b-hint', 'b-run', 'b-run-label', 'write', 'write-count',
       'j-left', 'j-right', 'j-keys', 'j-cols', 'j-name', 'j-run', 'j-hint', 'j-status', 'j-case', 'autosave',
       'r-left', 'r-right', 'r-llabel', 'r-rlabel', 'r-keys', 'r-norm', 'r-group', 'r-lamt', 'r-lminus', 'r-ramt', 'r-rminus',
       'r-flip', 'r-tol', 'r-ldate', 'r-rdate', 'r-ad', 'r-days', 'r-lextra', 'r-rextra', 'r-name', 'r-summary', 'r-run', 'r-hint', 'r-tip'];
@@ -315,7 +317,8 @@
         case 'view-data': togglePanel('data'); break;
         case 'insert-region': openRegionPanel(null); break;
         case 'quick-start': startQuick(btn.getAttribute('data-quick')); break;
-        case 'region-props': if (activeRegion()) openRegionPanel(activeRegion()); break;
+        case 'open-budget': openBudgetPanel(null); break;
+        case 'region-props': if (activeRegion()) { if (isBudget(activeRegion())) openBudgetPanel(activeRegion()); else openRegionPanel(activeRegion()); } break;
         case 'region-refresh': if (activeRegion()) refreshOne(activeRegion().id); break;
         case 'region-remove': if (activeRegion()) unlinkSource(activeRegion().id); break;
         case 'view-combine': togglePanel('combine'); break;
@@ -431,6 +434,7 @@
     });
     [ui.rLamt, ui.rRamt, ui.rAd].forEach(function (el) { el.addEventListener('change', updateReconState); });
     ui.rRun.addEventListener('click', runReconFromPanel);
+    ui.bRun.addEventListener('click', guard(insertBudgetFromPanel));
 
     // AutoSave switch (remembered per user in this browser)
     var pref = H.pref('autosave');
@@ -606,6 +610,8 @@
         if (!state.tables.length) requestTables('');
         setTimeout(function () { ui.tableSearch.focus(); }, 200);
       }
+    } else if (target === 'budget') {
+      prepareBudgetPanel();
     } else if (target === 'combine') {
       prepareCombine();
     } else {
@@ -829,6 +835,7 @@
 
   /** Requests data for a source and writes it to its sheet. Resolves with {loaded,total,truncated}. */
   function runSource(source) {
+    if (isBudget(source)) return runBudget(source).then(function (r) { return { loaded: r.accounts, total: r.accounts, truncated: false }; });
     setBusy(true);
     var requestId = 'r' + (++state.requestSeq);
     return new Promise(function (resolve, reject) {
@@ -1231,7 +1238,7 @@
       clearTimeout(s._refTimer);
       s._refTimer = setTimeout(function tick() {
         if (state.busy) { s._refTimer = setTimeout(tick, 800); return; }
-        if (s.editable && s.editing !== false && diffSource(s).length) {
+        if ((isTracking(s) && diffSource(s).length) || (budgetTracking(s) && budgetDiff(s).length)) {
           H.toast('warning', regionLabel(s) + ' was not refreshed: it has changes that are not saved to BC yet.');
           return;
         }
@@ -1374,6 +1381,8 @@
   /** Univer mutation hook: moves regions, follows filter cells, protects locked cells, schedules change checks. */
   function onSheetMutation(evt) {
     if (state.applying || !evt || !evt.params) return;
+    // Formula results are written back as mutations too; they are not user edits.
+    if (evt.options && (evt.options.fromFormula || evt.options.applyFormulaCalculationResult)) return;
     var id = evt.id, params = evt.params, sheetId = params.subUnitId;
     if (!sheetId) return;
     if (/sheet\.mutation\.(insert-row|remove-rows|insert-col|remove-col)$/.test(id)) {
@@ -1382,7 +1391,7 @@
       return;
     }
     if (id === 'sheet.mutation.set-range-values' && params.cellValue) {
-      var touched = [], perRegion = {};
+      var touched = [], perRegion = {}, budgetCells = {};
       Object.keys(params.cellValue).forEach(function (rk) {
         var r = +rk, rowCells = params.cellValue[rk];
         Object.keys(rowCells).forEach(function (ck) {
@@ -1390,11 +1399,13 @@
           if (!cell || !('v' in cell || 'f' in cell || 'p' in cell || 'si' in cell)) return;
           touched.push({ r: r, c: c });
           var s = regionAt(sheetId, r, c);
+          if (isBudget(s)) { (budgetCells[s.id] = budgetCells[s.id] || { s: s, cells: [] }).cells.push({ r: r, c: c }); return; }
           if (!isTracking(s)) return;
           (perRegion[s.id] = perRegion[s.id] || { s: s, cells: [] }).cells.push({ r: r, c: c });
         });
       });
       if (touched.length) onRefCellsChanged(sheetId, touched);
+      Object.keys(budgetCells).forEach(function (k) { onBudgetCells(budgetCells[k].s, budgetCells[k].cells); });
       Object.keys(perRegion).forEach(function (k) {
         var s = perRegion[k].s, a = anchorOf(s), reverts = [];
         perRegion[k].cells.forEach(function (x) {
@@ -1517,7 +1528,7 @@
 
   function updateWriteButton() {
     if (!ui.write) return;
-    var list = editableList();
+    var list = editableList().concat(budgetList());
     var total = list.reduce(function (t, s) { return t + (s.changeCount || 0); }, 0);
     ui.write.hidden = list.length === 0;
     ui.write.disabled = total === 0 || state.busy;
@@ -1528,6 +1539,18 @@
   /** Region Editing switch: off = view and formulas only (nothing tracked or sent); on = changes are tracked again. */
   function setRegionEditing(source, on) {
     if (!source || !source.editable) return;
+    if (isBudget(source)) {
+      var bs = workbook().getSheetBySheetId(source.sheetId);
+      if (!on && bs) {
+        applying(function () { (source.marks || []).forEach(function (mk) { bs.getRange(mk.r, mk.c, 1, 1).setBackgroundColor('#FFFFFF'); }); });
+        source.marks = []; source.changeCount = 0;
+      }
+      source.editing = on;
+      if (on) budgetDiff(source);
+      updateWriteButton(); updateRegionBar(); setDirty(true);
+      H.toast('info', on ? 'Editing is on for ' + source.tableCaption + '.' : 'Editing is off for ' + source.tableCaption + '. Nothing is sent to BC.');
+      return;
+    }
     source.editing = on;
     var sheet = workbook().getSheetBySheetId(source.sheetId);
     if (!on && sheet) {
@@ -1564,13 +1587,15 @@
   function saveToBC() {
     if (state.busy) return;
     var work = editableList().map(function (s) { return { source: s, changes: diffSource(s) }; })
+      .concat(budgetList().map(function (s) { return { source: s, changes: budgetDiff(s), budget: true }; }))
       .filter(function (w) { return w.changes.length; });
     if (!work.length) { H.toast('info', 'No changes to save to Business Central.'); return; }
-    var nMod = 0, nNew = 0;
-    work.forEach(function (w) { w.changes.forEach(function (x) { if (x.op === 'insert') nNew++; else nMod++; }); });
+    var nMod = 0, nNew = 0, nCells = 0;
+    work.forEach(function (w) { w.changes.forEach(function (x) { if (w.budget) nCells++; else if (x.op === 'insert') nNew++; else nMod++; }); });
     var parts = [];
     if (nMod) parts.push(nMod + (nMod === 1 ? ' changed row' : ' changed rows'));
     if (nNew) parts.push(nNew + (nNew === 1 ? ' new row' : ' new rows'));
+    if (nCells) parts.push(nCells + (nCells === 1 ? ' budget amount' : ' budget amounts'));
     H.choose('Write ' + parts.join(' and ') + ' to Business Central? Each field is checked by BC like on the normal page. Rows with an error are not saved.',
       [{ label: 'Save to BC', value: true, primary: true }], 'Save to Business Central')
       .then(function (ok) {
@@ -1580,11 +1605,17 @@
         var totals = { saved: 0, failed: 0 };
         var chain = Promise.resolve();
         work.forEach(function (w) {
-          chain = chain.then(function () { return writeSource(w.source, w.changes); })
+          chain = chain.then(function () { return w.budget ? writeBudget(w.source, w.changes) : writeSource(w.source, w.changes); })
             .then(function (r) { totals.saved += r.saved; totals.failed += r.failed; });
         });
         return chain.then(function () {
           setBusy(false);
+          var unit = nCells && !nMod && !nNew ? ['amount', 'amounts'] : ['row', 'rows'];
+          if (unit[0] === 'amount') {
+            if (totals.failed) H.toast('warning', 'Saved ' + totals.saved + ' budget ' + (totals.saved === 1 ? unit[0] : unit[1]) + '. ' + totals.failed + ' could not be saved: see the BC Status column.');
+            else H.toast('success', 'Saved ' + totals.saved + ' budget ' + (totals.saved === 1 ? unit[0] : unit[1]) + ' to Business Central.');
+            return;
+          }
           if (totals.failed) H.toast('warning', 'Saved ' + totals.saved + (totals.saved === 1 ? ' row' : ' rows') + '. ' + totals.failed + (totals.failed === 1 ? ' row has' : ' rows have') + ' an error: see the BC Status column.');
           else H.toast('success', 'Saved ' + totals.saved + (totals.saved === 1 ? ' row' : ' rows') + ' to Business Central.');
         }, function (e) { setBusy(false); reportError(e); });
@@ -1684,7 +1715,7 @@
 
   /** Before a refresh replaces an editable region: ask when it still has unsaved BC changes. */
   function confirmDiscard(sources) {
-    var pending = sources.filter(function (s) { return isTracking(s) && diffSource(s).length; });
+    var pending = sources.filter(function (s) { return (isTracking(s) && diffSource(s).length) || (budgetTracking(s) && budgetDiff(s).length); });
     if (!pending.length) return Promise.resolve(true);
     var n = pending.reduce(function (t, s) { return t + s.changeCount; }, 0);
     return H.choose(n + (n === 1 ? ' row has' : ' rows have') + ' changes that are not saved to Business Central. Refresh replaces them with the data from BC.',
@@ -1708,7 +1739,7 @@
     ui.regionbar.innerHTML =
       '<span class="ak-rbar__icon">' + H.icon('table') + '</span>' +
       '<span class="ak-rbar__name">' + H.escapeHtml(s.tableCaption) + '</span>' +
-      '<span class="ak-rbar__meta">' + H.escapeHtml(regionLabel(s)) + ' &middot; ' + H.formatInt(s.rowCount || 0) + ' rows' +
+      '<span class="ak-rbar__meta">' + H.escapeHtml(regionLabel(s)) + ' &middot; ' + H.formatInt(s.rowCount || 0) + (isBudget(s) ? ' accounts &middot; ' + (s.budget.periods) + ' ' + (s.budget.periodType === 'quarter' ? 'quarters' : 'months') : ' rows') +
       (s.filters && s.filters.length ? ' &middot; ' + s.filters.length + (s.filters.length === 1 ? ' filter' : ' filters') : '') + '</span>' +
       refs + editSwitch +
       '<span class="ak-rbar__sp"></span>' +
@@ -1768,8 +1799,9 @@
       catch (e) { /* menus optional */ }
     };
     add('ak.region.insert', 'Insert Business Central region here', function () { openRegionPanel(null); }, 0);
-    add('ak.region.props', 'Region properties', function () { var s = regionAtSelection(); if (s) openRegionPanel(s); else H.toast('info', 'Select a cell inside a region first.'); }, 1);
-    add('ak.region.refresh', 'Refresh region', function () { var s = regionAtSelection(); if (s) refreshOne(s.id); else H.toast('info', 'Select a cell inside a region first.'); }, 2);
+    add('ak.budget.insert', 'Insert budget grid here', function () { openBudgetPanel(null); }, 1);
+    add('ak.region.props', 'Region properties', function () { var s = regionAtSelection(); if (s) { if (isBudget(s)) openBudgetPanel(s); else openRegionPanel(s); } else H.toast('info', 'Select a cell inside a region first.'); }, 2);
+    add('ak.region.refresh', 'Refresh region', function () { var s = regionAtSelection(); if (s) refreshOne(s.id); else H.toast('info', 'Select a cell inside a region first.'); }, 3);
   }
 
   function regionAtSelection() {
@@ -1819,6 +1851,13 @@
         H.icon(/jnl/.test(q.id) ? 'receipt' : 'table') + '<span><b>' + H.escapeHtml(q.title) + '</b>' +
         (meta ? '<small>' + H.escapeHtml(meta) + '</small>' : '') + '</span></button>';
     }).join('') : '';
+    var b = state.config.budget;
+    if (b && (b.names || []).length) {
+      ui.quick.hidden = false;
+      if (!list.length) ui.quick.innerHTML = '<span class="ak-quick__label">Quick start</span>';
+      ui.quick.innerHTML += '<button class="ak-quick__btn" data-act="open-budget" title="G/L accounts by period">' + H.icon('sliders') +
+        '<span><b>Budget grid</b><small>' + H.escapeHtml(b.names.map(function (x) { return x.name; }).slice(0, 3).join(', ')) + '</small></span></button>';
+    }
   }
 
   /** A quick start fills the panel with the region's table, fields (in page order) and filters; the user can still change them. */
@@ -1866,6 +1905,407 @@
         (source.editable ? ' Type or paste lines below, then Save to BC.' : ''));
       if (!source.editable && def.editReason) H.toast('info', 'Read-only: ' + def.editReason);
     }, function () { });
+  }
+
+  // =====================================================================================
+  // Stage 3: budget grid region (G/L accounts x periods, written as G/L Budget Entries)
+  //
+  // A budget region is a source with kind 'budget'. Columns: No., Name, one column per period, Total
+  // (a SUM formula), optionally last year's actuals per period and their total, and BC Status.
+  // Only period cells of posting accounts are editable. Typing a number into Total spreads it over the
+  // periods (by last year's actuals when shown, otherwise evenly). Save to BC sends changed cells to AL,
+  // which adds one G/L Budget Entry for each cell's difference.
+  // =====================================================================================
+  var BUDGET_FILTERS = { account: -1, dim1: -2, dim2: -3 };
+
+  function isBudget(s) { return !!(s && s.kind === 'budget'); }
+  function budgetTracking(s) { return isBudget(s) && s.editable && s.editing !== false && s.budgetOrig; }
+  function budgetList() { return sourceList().filter(budgetTracking); }
+
+  function budgetViewHtml() {
+    return '<section class="ak-view" data-view="budget" aria-label="Budget grid">' +
+      panelHead('Budget grid', 'G/L accounts by period, saved as G/L Budget Entries') +
+      '<div class="ak-panel__scroll">' +
+      '  <section class="ak-step">' +
+      '    <div class="ak-step__label"><span class="ak-step__num">1</span>Budget</div>' +
+      '    <label class="ak-field"><span>Budget name</span><select id="ak-b-name" class="ak-input ak-select"></select></label>' +
+      '    <div class="ak-grid2">' +
+      '      <label class="ak-field"><span>Starting date</span><input id="ak-b-start" class="ak-input" type="date"></label>' +
+      '      <label class="ak-field"><span>Periods</span><input id="ak-b-periods" class="ak-input" type="number" min="1" max="24" value="12"></label>' +
+      '    </div>' +
+      '    <div class="ak-seg" role="radiogroup" aria-label="Period length">' +
+      '      <label><input type="radio" name="ak-b-type" value="month" checked><span>Months</span></label>' +
+      '      <label><input type="radio" name="ak-b-type" value="quarter"><span>Quarters</span></label>' +
+      '    </div>' +
+      '  </section>' +
+      '  <section class="ak-step">' +
+      '    <div class="ak-step__label"><span class="ak-step__num">2</span>Filters</div>' +
+      '    <label class="ak-field"><span>G/L accounts</span><input id="ak-b-acc" class="ak-input" placeholder="e.g. 40000..69999 (empty = all)"></label>' +
+      '    <label class="ak-field"><span id="ak-b-d1cap">Global Dimension 1</span><input id="ak-b-d1" class="ak-input" placeholder="empty = all, or one value, or [B1]"></label>' +
+      '    <label class="ak-field"><span id="ak-b-d2cap">Global Dimension 2</span><input id="ak-b-d2" class="ak-input" placeholder="empty = all, or one value, or [B2]"></label>' +
+      '    <p class="ak-help">Filters can point to a cell, like <code>[B1]</code>: change the cell and the grid reloads. To save changes, dimension filters must be empty or one value.</p>' +
+      '  </section>' +
+      '  <section class="ak-step">' +
+      '    <div class="ak-step__label"><span class="ak-step__num">3</span>Output</div>' +
+      '    <label class="ak-check"><input type="checkbox" id="ak-b-ly" checked><span>Show last year\'s actuals next to the budget</span></label>' +
+      '    <div class="ak-seg ak-mt" role="radiogroup" aria-label="Where" id="ak-b-dest-wrap">' +
+      '      <label><input type="radio" name="ak-b-dest" value="here" checked><span>At <b id="ak-b-dest-cell">A1</b></span></label>' +
+      '      <label><input type="radio" name="ak-b-dest" value="new"><span>New sheet</span></label>' +
+      '    </div>' +
+      '    <p class="ak-help ak-edit-why" id="ak-b-why" hidden></p>' +
+      '  </section>' +
+      '</div>' +
+      '<div class="ak-panel__foot">' +
+      '  <span class="ak-panel__hint" id="ak-b-hint">Type amounts in the period columns, or a yearly amount in Total to spread it.</span>' +
+      '  <button class="ak-btn ak-btn--primary ak-btn--lg" id="ak-b-run">' + H.icon('table') + '<span id="ak-b-run-label">Insert budget grid</span></button>' +
+      '</div></section>';
+  }
+
+  function prepareBudgetPanel() {
+    var cfg = state.config.budget || {};
+    var editing = state.budgetEdit && state.sources[state.budgetEdit];
+    var def = editing ? editing.budget : null;
+    ui.bName.innerHTML = (cfg.names || []).map(function (n) {
+      return '<option value="' + H.escapeHtml(n.name) + '">' + H.escapeHtml(n.name + (n.description ? ' · ' + n.description : '') + (n.blocked ? ' (blocked)' : '')) + '</option>';
+    }).join('');
+    ui.bD1cap.textContent = cfg.dim1Caption || 'Global Dimension 1';
+    ui.bD2cap.textContent = cfg.dim2Caption || 'Global Dimension 2';
+    if (def) {
+      ui.bName.value = def.budgetName;
+      ui.bStart.value = def.startDate;
+      ui.bPeriods.value = def.periods;
+      ui.bAcc.value = def.accountFilter || '';
+      ui.bD1.value = def.dim1Filter || '';
+      ui.bD2.value = def.dim2Filter || '';
+      ui.bLy.checked = !!def.showLY;
+      (ui.panel.querySelector('input[name=ak-b-type][value=' + (def.periodType || 'month') + ']') || {}).checked = true;
+    } else if (!ui.bStart.value) {
+      ui.bStart.value = cfg.startDate || new Date().toISOString().slice(0, 10);
+    }
+    var t = editing ? { sheetId: editing.sheetId, row: anchorOf(editing).row, col: anchorOf(editing).col } : selectedCell();
+    state.budgetAnchor = t;
+    ui.bDestCell.textContent = sheetName(t.sheetId) + '!' + cellName(t.row, t.col);
+    ui.bDestWrap.hidden = !!editing;
+    ui.bRunLabel.textContent = editing ? 'Update budget grid' : 'Insert budget grid';
+    ui.bWhy.hidden = !!cfg.canWrite;
+    ui.bWhy.textContent = cfg.canWrite ? '' : 'Read-only: ' + (cfg.writeReason || 'budgets cannot be changed from a workbook.');
+    ui.bRun.disabled = !(cfg.names || []).length;
+    if (!(cfg.names || []).length) ui.bHint.textContent = 'No G/L budgets yet. Create one on the G/L Budgets page first.';
+  }
+
+  function openBudgetPanel(source) {
+    state.budgetEdit = source ? source.id : null;
+    if (!ui.app.classList.contains('is-panel-open') || ui.panel.getAttribute('data-view') !== 'budget') togglePanel('budget');
+    else prepareBudgetPanel();
+  }
+
+  function insertBudgetFromPanel() {
+    var cfg = state.config.budget || {};
+    var wb = workbook();
+    var existing = state.budgetEdit && state.sources[state.budgetEdit];
+    var dest = (ui.panel.querySelector('input[name=ak-b-dest]:checked') || {}).value || 'here';
+    var def = {
+      budgetName: ui.bName.value,
+      startDate: ui.bStart.value,
+      periods: Math.max(1, Math.min(24, parseInt(ui.bPeriods.value, 10) || 12)),
+      periodType: (ui.panel.querySelector('input[name=ak-b-type]:checked') || {}).value || 'month',
+      accountFilter: ui.bAcc.value.trim(),
+      dim1Filter: ui.bD1.value.trim(),
+      dim2Filter: ui.bD2.value.trim(),
+      showLY: ui.bLy.checked
+    };
+    if (!def.budgetName || !def.startDate) { H.toast('warning', 'Choose a budget and a starting date.'); return; }
+    var sheet, anchor;
+    if (existing) {
+      sheet = wb.getSheetBySheetId(existing.sheetId); anchor = anchorOf(existing);
+    } else if (dest === 'new') {
+      sheet = wb.insertSheet(uniqueSheetName('Budget ' + def.budgetName)); excelLook(sheet); anchor = { row: 0, col: 0 };
+    } else {
+      var t = state.budgetAnchor || selectedCell();
+      sheet = wb.getSheetBySheetId(t.sheetId) || wb.getActiveSheet(); anchor = { row: t.row, col: t.col };
+      var clash = regionAt(sheet.getSheetId(), anchor.row, anchor.col);
+      if (clash) { H.toast('error', 'This cell is inside region ' + clash.tableCaption + '. Pick an empty cell.'); return; }
+    }
+    wb.setActiveSheet(sheet);
+    var source = existing || { id: H.uid('rg'), kind: 'budget', sheetId: sheet.getSheetId(), anchor: anchor, lastRows: 0, lastCols: 0, fields: [] };
+    source.budget = def;
+    source.tableCaption = 'Budget ' + def.budgetName;
+    source.filters = [
+      { fieldNo: BUDGET_FILTERS.account, filter: def.accountFilter },
+      { fieldNo: BUDGET_FILTERS.dim1, filter: def.dim1Filter },
+      { fieldNo: BUDGET_FILTERS.dim2, filter: def.dim2Filter }
+    ].filter(function (f) { return f.filter; });
+    source.editable = !!cfg.canWrite;
+    if (source.editing === undefined) source.editing = true;
+    try { parseRefs(source); } catch (e) { H.toast('error', e.message); return; }
+    var go = function () {
+      runBudget(source).then(function (r) {
+        H.toast('success', 'Budget ' + def.budgetName + ': ' + H.formatInt(r.accounts) + ' accounts, ' + r.periods + ' periods at ' + regionLabel(source) + '.');
+        state.budgetEdit = source.id;
+        prepareBudgetPanel();
+        updateRegionBar();
+      }, function () { });
+    };
+    if (existing) confirmDiscard([existing]).then(function (ok) { if (ok) go(); }); else go();
+  }
+
+  function budgetFilterValue(source, which) {
+    var no = BUDGET_FILTERS[which];
+    var f = resolveFilters(source).filter(function (x) { return x.fieldNo === no; })[0];
+    return f ? f.filter : '';
+  }
+
+  function runBudget(source) {
+    setBusy(true);
+    setProgress(-1);
+    var requestId = 'b' + (++state.requestSeq);
+    return new Promise(function (resolve, reject) {
+      var payload;
+      try {
+        payload = {
+          requestId: requestId, budgetName: source.budget.budgetName, startDate: source.budget.startDate,
+          periods: source.budget.periods, periodType: source.budget.periodType, showLY: !!source.budget.showLY,
+          accountFilter: budgetFilterValue(source, 'account'), dim1Filter: budgetFilterValue(source, 'dim1'), dim2Filter: budgetFilterValue(source, 'dim2')
+        };
+      } catch (e) { H.toast('error', e.message); reject(e); return; }
+      state.budgetPending[requestId] = { source: source, resolve: resolve, reject: reject };
+      H.sendChunked('budget', JSON.stringify(payload), state.config.chunkSize).catch(function (e) {
+        delete state.budgetPending[requestId]; reject(e);
+      });
+    }).then(function (r) { setBusy(false); return r; }, function (e) { setBusy(false); throw e; });
+  }
+
+  /** AL answer to a budget load: writes the grid, the Total formulas, last year's block and the look. */
+  function onBudgetData(text) {
+    var res = JSON.parse(text);
+    var p = state.budgetPending[res.requestId];
+    if (!p) return;
+    delete state.budgetPending[res.requestId];
+    if (res.error) { H.toast('error', res.error); p.reject(new Error(res.error)); return; }
+    var source = p.source, def = source.budget, periods = res.periods, n = periods.length, ly = !!def.showLY;
+    var header = ['No.', 'Name'].concat(periods.map(function (x) { return x.label; }), ['Total']);
+    if (ly) header = header.concat(periods.map(function (x) { return 'LY ' + x.label; }), ['LY Total']);
+    header.push('BC Status');
+    var types = header.map(function (h, i) { return i < 2 || i === header.length - 1 ? 'Text' : 'Decimal'; });
+    var rows = res.rows.map(function (r) {
+      var line = [r.no, new Array((r.indent || 0) + 1).join('   ') + r.name].concat(r.budget, [0]);
+      if (ly) line = line.concat(r.ly, [0]);
+      line.push('');
+      return line;
+    });
+    var room = roomBelow(source);
+    if (rows.length + 1 > room) { H.toast('warning', 'Only ' + Math.max(room - 1, 0) + ' accounts fit above the next region.'); rows = rows.slice(0, Math.max(room - 1, 0)); }
+    source.editable = !!res.canWrite && !!(state.config.budget || {}).canWrite;
+    source.periodsDef = periods;
+    source.budgetMeta = { n: n, ly: ly, totalCol: 2 + n, lyStart: 3 + n, lyTotalCol: 3 + 2 * n, statusCol: header.length - 1 };
+    source.dataCols = header.length - 1;
+    source.budgetOrig = {};
+    source.budgetPosting = {};
+    res.rows.slice(0, rows.length).forEach(function (r) { source.budgetOrig[r.no] = r.budget.slice(); source.budgetPosting[r.no] = !!r.posting; });
+    source.rowCount = rows.length;
+    source.budgetGrid = rows.map(function (r) { return r.slice(0, source.dataCols); });
+    applying(function () {
+      var sheet = writeTable(source, header, types, rows);
+      paintBudget(source, sheet, res.rows.slice(0, rows.length));
+      styleRegion(source, sheet, rows.length + 1, header.length);
+    });
+    source.loadedAt = new Date().toISOString();
+    state.sources[source.id] = source;
+    budgetDiff(source);
+    renderSources(); renderBarSources(); updateRegionBar(); setDirty(true);
+    p.resolve({ accounts: rows.length, periods: n });
+  }
+
+  function paintBudget(source, sheet, meta) {
+    var a = anchorOf(source), m = source.budgetMeta, n = m.n, width = source.dataCols + 1;
+    var col = function (c) { return H.colLetter(a.col + c); };
+    meta.forEach(function (r, i) {
+      var row = a.row + 1 + i, rn = row + 1;
+      sheet.getRange(row, a.col + m.totalCol, 1, 1).setFormula('=SUM(' + col(2) + rn + ':' + col(1 + n) + rn + ')');
+      if (m.ly) sheet.getRange(row, a.col + m.lyTotalCol, 1, 1).setFormula('=SUM(' + col(m.lyStart) + rn + ':' + col(m.lyStart + n - 1) + rn + ')');
+      if (!r.posting) {
+        var line = sheet.getRange(row, a.col, 1, width - 1);
+        line.setFontWeight('bold');
+        line.setBackgroundColor('#F2F2F2');
+      }
+    });
+    var body = Math.max(meta.length, 1);
+    try { sheet.getRange(a.row + 1, a.col, body, 2).setFontColor('#262626'); } catch (e) { /* optional */ }
+    try {
+      var totals = sheet.getRange(a.row + 1, a.col + m.totalCol, body, 1);
+      totals.setFontWeight('bold'); totals.setBackgroundColor('#EEF3FA');
+    } catch (e) { /* optional */ }
+    if (m.ly) {
+      try {
+        var lyRange = sheet.getRange(a.row + 1, a.col + m.lyStart, body, n + 1);
+        lyRange.setFontColor('#595959'); lyRange.setBackgroundColor('#F7F7F7');
+        sheet.getRange(a.row, a.col + m.lyStart, 1, n + 1).setBackgroundColor('#8EA9DB');
+      } catch (e) { /* optional */ }
+    }
+    try {
+      var st = sheet.getRange(a.row, a.col + m.statusCol, 1, 1);
+      st.setBackgroundColor(XL.statusHead);
+      sheet.setColumnWidths(a.col + m.statusCol, 1, 260);
+      sheet.setColumnWidths(a.col + 1, 1, 240);
+      sheet.setColumnWidths(a.col + 2, n, 96);
+      sheet.setColumnWidths(a.col + m.totalCol, 1, 118);
+      if (m.ly) sheet.setColumnWidths(a.col + m.lyTotalCol, 1, 118);
+      if (m.ly) sheet.setColumnWidths(a.col + m.lyStart, n, 92);
+    } catch (e) { /* optional */ }
+    if (a.row === 0) { try { sheet.setFrozenColumns(a.col + 2); } catch (e) { /* optional */ } }
+  }
+
+  /** Cell edits inside a budget region: period cells of posting rows are tracked, Total spreads, the rest is put back. */
+  function onBudgetCells(source, cells) {
+    if (!budgetTracking(source)) return;
+    var sheet = workbook().getSheetBySheetId(source.sheetId);
+    var a = anchorOf(source), m = source.budgetMeta, reverts = [], spreads = [];
+    cells.forEach(function (x) {
+      var r = x.r - a.row - 1, c = x.c - a.col;
+      if (r < 0 || r >= source.rowCount || c >= source.dataCols) return;
+      var no = String(sheet.getRange(x.r, a.col, 1, 1).getValue());
+      var posting = source.budgetPosting[no];
+      if (c >= 2 && c < 2 + m.n && posting) return; // editable period cell
+      if (c === m.totalCol && posting) { spreads.push({ r: x.r, no: no }); return; }
+      reverts.push(x);
+    });
+    if (spreads.length) setTimeout(function () { spreadTotals(source, sheet, spreads); }, 0);
+    if (reverts.length) setTimeout(function () { revertBudgetCells(source, sheet, reverts); }, 0);
+    clearTimeout(source._diffTimer);
+    source._diffTimer = setTimeout(function () { budgetDiff(source); }, 350);
+  }
+
+  /** A number typed into Total is spread over the periods: by last year's actuals when shown and not zero, else evenly. */
+  function spreadTotals(source, sheet, spreads) {
+    var a = anchorOf(source), m = source.budgetMeta, col = function (c) { return H.colLetter(a.col + c); };
+    spreads.forEach(function (x) {
+      var cell = sheet.getRange(x.r, a.col + m.totalCol, 1, 1);
+      // The typed number can come back as formatted text ("240,000.00"), so strip the separators.
+      var raw = cell.getRawValues()[0][0];
+      var total = typeof raw === 'number' ? raw : +String(raw == null ? '' : raw).replace(/[^0-9.\-]/g, '');
+      if (!isFinite(total) || String(raw).trim() === '') return;
+      var weights = [];
+      if (m.ly) weights = sheet.getRange(x.r, a.col + m.lyStart, 1, m.n).getRawValues()[0].map(function (v) { return Math.abs(+v || 0); });
+      var sum = weights.reduce(function (t, v) { return t + v; }, 0);
+      if (!sum) { weights = []; for (var i = 0; i < m.n; i++) weights.push(1); sum = m.n; }
+      var parts = weights.map(function (w) { return Math.round(total * w / sum * 100) / 100; });
+      parts[m.n - 1] = Math.round((total - parts.slice(0, -1).reduce(function (t, v) { return t + v; }, 0)) * 100) / 100;
+      sheet.getRange(x.r, a.col + 2, 1, m.n).setValues([parts]);
+      applying(function () { cell.setFormula('=SUM(' + col(2) + (x.r + 1) + ':' + col(1 + m.n) + (x.r + 1) + ')'); });
+    });
+    H.toast('info', 'Spread over ' + m.n + ' periods' + (m.ly ? ' by last year\'s actuals.' : ' evenly.') + ' Save to BC when ready.');
+    budgetDiff(source);
+  }
+
+  function revertBudgetCells(source, sheet, cells) {
+    var a = anchorOf(source), m = source.budgetMeta, values = 0;
+    applying(function () {
+      cells.forEach(function (x) {
+        var c = x.c - a.col, i = x.r - a.row - 1, rn = x.r + 1;
+        if (c === m.totalCol || c === m.lyTotalCol) {
+          var from = c === m.totalCol ? 2 : m.lyStart;
+          sheet.getRange(x.r, x.c, 1, 1).setFormula('=SUM(' + H.colLetter(a.col + from) + rn + ':' + H.colLetter(a.col + from + m.n - 1) + rn + ')');
+          return;
+        }
+        var line = source.budgetGrid && source.budgetGrid[i];
+        if (line) { sheet.getRange(x.r, x.c, 1, 1).setValue(line[c] == null ? '' : line[c]); values++; }
+      });
+    });
+    H.toast('warning', values
+      ? 'Only the period amounts of posting accounts can be changed here. The value was put back.'
+      : 'Total is a formula. Type a number in Total to spread it over the periods.');
+  }
+
+  function budgetDiff(source) {
+    var sheet = workbook() && workbook().getSheetBySheetId(source.sheetId);
+    if (!sheet || !budgetTracking(source)) { if (source) { source.changeCount = 0; updateWriteButton(); } return []; }
+    var a = anchorOf(source), m = source.budgetMeta, n = m.n;
+    var raw = source.rowCount ? sheet.getRange(a.row + 1, a.col, source.rowCount, source.dataCols + 1).getRawValues() : [];
+    var changes = [];
+    raw.forEach(function (line, i) {
+      var no = String(line[0]), orig = source.budgetOrig[no];
+      if (!orig || !source.budgetPosting[no]) return;
+      for (var k = 0; k < n; k++) {
+        var v = line[2 + k];
+        var num = v === '' || v == null ? 0 : +String(v).replace(/,/g, '');
+        if (!isFinite(num)) num = NaN;
+        if (isNaN(num) || Math.abs(num - (+orig[k] || 0)) > 0.0001) changes.push({ r: a.row + 1 + i, c: a.col + 2 + k, k: k, account: no, amount: num, status: line[m.statusCol] });
+      }
+    });
+    applying(function () {
+      (source.marks || []).forEach(function (mk) { sheet.getRange(mk.r, mk.c, 1, 1).setBackgroundColor('#FFFFFF'); });
+      source.marks = [];
+      var rowsChanged = {};
+      changes.forEach(function (x) {
+        if (source.marks.length < 3000) { sheet.getRange(x.r, x.c, 1, 1).setBackgroundColor(EDIT_COLORS.changed); source.marks.push({ r: x.r, c: x.c }); }
+        rowsChanged[x.r] = true;
+      });
+      for (var i = 0; i < raw.length; i++) {
+        var r = a.row + 1 + i, st = raw[i][m.statusCol], cell = sheet.getRange(r, a.col + m.statusCol, 1, 1);
+        if (rowsChanged[r] && (!st || st === STATUS_CHANGED || /^Saved/.test(String(st)))) { cell.setValue(STATUS_CHANGED); cell.setFontColor('#835B00'); }
+        else if (!rowsChanged[r] && st === STATUS_CHANGED) cell.setValue('');
+      }
+    });
+    source.changeCount = changes.length;
+    updateWriteButton();
+    return changes;
+  }
+
+  function writeBudget(source, changes) {
+    var p = source.periodsDef;
+    var payload = {
+      requestId: 'bw' + (++state.requestSeq),
+      budgetName: source.budget.budgetName,
+      dim1Filter: budgetFilterValue(source, 'dim1'),
+      dim2Filter: budgetFilterValue(source, 'dim2'),
+      changes: changes.map(function (x) {
+        return { row: x.r, col: x.c, account: x.account, start: p[x.k].start, end: p[x.k].end, amount: isNaN(x.amount) ? 'x' : String(Math.round(x.amount * 100) / 100) };
+      })
+    };
+    return new Promise(function (resolve, reject) {
+      state.writes[payload.requestId] = { source: source, resolve: resolve, changes: changes, budget: true };
+      H.sendChunked('budgetwrite', JSON.stringify(payload), state.config.chunkSize).catch(function (e) {
+        delete state.writes[payload.requestId]; reject(e);
+      });
+    });
+  }
+
+  function onBudgetResult(text) {
+    var res = JSON.parse(text);
+    var w = state.writes[res.requestId];
+    if (!w) return;
+    delete state.writes[res.requestId];
+    var source = w.source;
+    if (res.error) { H.toast('error', res.error); w.resolve({ saved: 0, failed: w.changes.length }); return; }
+    var sheet = workbook().getSheetBySheetId(source.sheetId);
+    var a = anchorOf(source), m = source.budgetMeta, time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    var errorsByRow = {}, savedRows = {};
+    applying(function () {
+      (res.results || []).forEach(function (r) {
+        var ch = w.changes.filter(function (x) { return x.r === r.row && x.c === r.col; })[0];
+        if (!ch) return;
+        if (r.ok) {
+          source.budgetOrig[ch.account][ch.k] = r.amount;
+          sheet.getRange(r.row, r.col, 1, 1).setValue(r.amount);
+          savedRows[r.row] = true;
+        } else {
+          (errorsByRow[r.row] = errorsByRow[r.row] || []).push(source.periodsDef[ch.k].label + ': ' + r.error);
+          sheet.getRange(r.row, r.col, 1, 1).setBackgroundColor('#FDE7E9');
+        }
+      });
+      Object.keys(savedRows).forEach(function (row) {
+        if (errorsByRow[row]) return;
+        var c = sheet.getRange(+row, a.col + m.statusCol, 1, 1); c.setValue('Saved ' + time); c.setFontColor('#0E700E');
+      });
+      Object.keys(errorsByRow).forEach(function (row) {
+        var c = sheet.getRange(+row, a.col + m.statusCol, 1, 1); c.setValue(errorsByRow[row].join(' | ')); c.setFontColor('#A4262C');
+      });
+    });
+    setDirty(true);
+    budgetDiff(source);
+    w.resolve({ saved: res.saved || 0, failed: res.failed || 0 });
+    // Totaling accounts (Total revenue...) come from BC: reload the grid when everything was saved.
+    if (!res.failed && res.saved) setTimeout(function () { if (!state.busy) runBudget(source).catch(function () { }); }, 300);
   }
 
   // =====================================================================================
@@ -2880,6 +3320,8 @@
     if (purpose === 'load') loadEnvelope(full);
     else if (purpose === 'import') importXlsxBuffer(H.base64ToArrayBuffer(full), 'replace');
     else if (purpose === 'writeresult') onWriteResult(full);
+    else if (purpose === 'budgetdata') onBudgetData(full);
+    else if (purpose === 'budgetresult') onBudgetResult(full);
   });
 
   window.RequestSave = guard(function () { requestSave(); });
@@ -2889,7 +3331,7 @@
   window.ShowToast = guard(function (level, message) { H.toast(level, message); });
 
   // Exposed for automated tests only.
-  window.AKWorkbookDebug = { state: state, diffSource: diffSource, saveToBC: saveToBC, updateRegionBar: updateRegionBar, buildXlsx: buildXlsx, runJoin: runJoin, runRecon: runRecon, importXlsxBuffer: importXlsxBuffer };
+  window.AKWorkbookDebug = { budgetDiff: budgetDiff, state: state, diffSource: diffSource, saveToBC: saveToBC, updateRegionBar: updateRegionBar, buildXlsx: buildXlsx, runJoin: runJoin, runRecon: runRecon, importXlsxBuffer: importXlsxBuffer };
 
   // =====================================================================================
   // Boot
