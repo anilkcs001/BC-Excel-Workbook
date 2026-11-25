@@ -1,0 +1,27 @@
+{
+  "name": "ak-workbook-vendor",
+  "version": "1.0.0",
+  "description": "Builds vendor scripts for the AK Excel Workbook control add-in",
+  "main": "index.js",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@univerjs/preset-sheets-conditional-formatting": "^1.2.0",
+    "@univerjs/preset-sheets-core": "^1.2.0",
+    "@univerjs/preset-sheets-data-validation": "^1.2.0",
+    "@univerjs/preset-sheets-filter": "^1.2.0",
+    "@univerjs/preset-sheets-find-replace": "^1.2.0",
+    "@univerjs/preset-sheets-sort": "^1.2.0",
+    "@univerjs/presets": "^1.2.0",
+    "esbuild": "^0.28.2",
+    "exceljs": "^4.4.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "rxjs": "^7.8.2"
+  },
+  "private": true
+}

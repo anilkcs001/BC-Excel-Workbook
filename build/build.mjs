@@ -1,0 +1,13 @@
+import { build } from 'esbuild';
+import { copyFileSync, mkdirSync } from 'node:fs';
+const js = '../ControlAddin/scripts/vendor';
+const css = '../ControlAddin/stylesheets/vendor';
+mkdirSync(js, { recursive: true }); mkdirSync(css, { recursive: true });
+await build({
+  entryPoints: ['entry.js'], bundle: true, minify: true, format: 'iife', globalName: 'AKUniver',
+  target: ['es2020'], outfile: `${js}/univer.bundle.js`, legalComments: 'none',
+  define: { 'process.env.NODE_ENV': '"production"' }, loader: { '.woff': 'dataurl', '.woff2': 'dataurl', '.ttf': 'dataurl', '.svg': 'dataurl', '.png': 'dataurl' },
+});
+copyFileSync(`${js}/univer.bundle.css`, `${css}/univer.bundle.css`);
+copyFileSync('node_modules/exceljs/dist/exceljs.min.js', `${js}/exceljs.min.js`);
+console.log('Vendor bundle built.');

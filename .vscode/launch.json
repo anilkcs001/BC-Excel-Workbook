@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "BC Sandbox (AK Excel Workbook)",
+      "type": "al",
+      "request": "launch",
+      "environmentType": "Sandbox",
+      "environmentName": "YOUR-SANDBOX-NAME",
+      "tenant": "YOUR-TENANT-ID",
+      "startupObjectId": 89000,
+      "startupObjectType": "Page",
+      "breakOnError": "All",
+      "launchBrowser": true,
+      "enableLongRunningSqlStatementsDebugging": true,
+      "schemaUpdateMode": "Synchronize"
+    }
+  ]
+}
