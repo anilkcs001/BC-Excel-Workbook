@@ -13,13 +13,14 @@ It puts a full spreadsheet inside Business Central, on a page that is **only the
 - **combine** two sheets on matching keys (Phase 2);
 - **reconcile** books against a bank statement, GSTR-2B or a party ledger (Phase 3), with an exceptions-first result sheet and a live summary sheet;
 - **work on journal and document lines** (Stage 2): *Edit in Excel Workbook* on the General Journal, Item Journal, Sales Order and Purchase Order pages opens the lines as a region; type or paste many lines and BC fills the template, batch or document, the next Line No. and the journal defaults, like a new line on the page. The same four appear as *Quick start* tiles in the region panel;
+- **open BC from any cell** (Stage 5): Ctrl+click a region row to open its record, or a budget / last-year amount to open the G/L budget entries or G/L entries behind it;
 - **pick a period once for the whole sheet** (Stage 4): a *period picker* cell (This Month, Year to Date, Last Fiscal Year...) drives every region whose date filter points to it;
 - **plan budgets in a grid** (Stage 3): G/L accounts down, months or quarters across, last year's actuals alongside; type amounts (or a yearly total to spread it) and **Save to BC** adds G/L Budget Entries for the differences;
 - **edit BC data in the sheet and save it back** (Stage 1 write-back): change values or type new rows below the data, then **Save to BC**. Each field goes through BC's own `Validate`, and a *BC Status* column shows *Saved* or BC's error per row. Only tables an admin allows can be edited.
 
 Every command (AutoSave, Save to BC, Save, Refresh, Import, Export, Combine, Reconcile, Insert region) sits in the add-in's own toolbar, with region commands also on the right-click menu and on a region bar that appears when a cell inside a region is selected. The page has no BC fields or action bar. The look follows Excel: Excel green accent, Calibri 11, and regions styled like an Excel table (blue header, thin border, banded rows).
 
-Delivered: Phase 1 (sheet, data explorer, save, refresh, Excel I/O), Phase 2 (Combine), Phase 3 (Reconcile), Stage 1 of the advanced features (editable regions with write-back) Stage 1b (regions anywhere on a sheet, cell-driven filters, Editing switch, Excel look), Stage 2 (journal and document lines), Stage 3 (budget grid) and Stage 4 (period picker). Next stages: journal and document lines, budget grid, cell-driven filters (slicers), drill-down, BC formulas in cells, KPI cards and charts.
+Delivered: Phase 1 (sheet, data explorer, save, refresh, Excel I/O), Phase 2 (Combine), Phase 3 (Reconcile), Stage 1 of the advanced features (editable regions with write-back) Stage 1b (regions anywhere on a sheet, cell-driven filters, Editing switch, Excel look), Stage 2 (journal and document lines), Stage 3 (budget grid), Stage 4 (period picker) and Stage 5 (drill-down). Next stages: journal and document lines, budget grid, cell-driven filters (slicers), drill-down, BC formulas in cells, KPI cards and charts.
 
 ## 2. Object list
 
@@ -37,6 +38,7 @@ Delivered: Phase 1 (sheet, data explorer, save, refresh, Excel I/O), Phase 2 (Co
 | 89004 | Codeunit | AK Workbook Lines (journal/document line regions, quick starts, open from pages) |
 | 89005 | Codeunit | AK Workbook Budget (budget grid load, budget setup for the panel) |
 | 89006 | Codeunit | AK Workbook Budget Write (one budget cell per run) |
+| 89007 | Codeunit | AK Workbook Drill Down (opens the BC page behind a cell) |
 | 89000 | PageExtension | AK General Journal (action *Edit in Excel Workbook*) |
 | 89001 | PageExtension | AK Item Journal (action *Edit in Excel Workbook*) |
 | 89002 | PageExtension | AK Sales Order (action *Edit in Excel Workbook*) |
@@ -114,6 +116,12 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 - **Combine and Reconcile** read the first region of a sheet (its block only, without the BC Status column).
 - **Screenshots** (mock data): [panel with a cell filter](docs/images/stage1b-r1-panel.jpg) · [region at A4 with title, filter cell and totals](docs/images/stage1b-r3-two-regions.jpg) · [right-click menu](docs/images/stage1b-r4-context.jpg) · [Editing switched off](docs/images/stage1b-r5-editing-off.jpg).
 
+**Drill-down (Stage 5, codeunit 89007 "AK Workbook Drill Down").**
+- **How.** Ctrl+click (Cmd+click on Mac) a cell inside a region, or right-click > *Open in Business Central (Ctrl+click)*, or *Open* on the region bar.
+- **Region rows** open the record on its own page: the add-in sends the row's key values; AL filters the table on them (Code/Text values quoted, ISO dates localized) and calls `Page Management.PageRun`, which picks the table's card or list page. The region must contain all key fields (the panel's *Key* button selects them).
+- **Budget grid.** A period cell or Total opens *G/L Budget Entries* for that budget, account, period and dimension filters; a last-year cell or LY Total opens *General Ledger Entries* for the same period a year earlier. Heading and total accounts drill into the accounts in their *Totaling*.
+- Pages open next to the workbook; if BC cannot find the record (deleted since the load) the add-in says so.
+
 **Period picker (Stage 4, main.js "period picker" section).**
 - **Inserting.** *Period picker* in the Quick start tiles or *Insert period picker here* on the right-click menu turns the selected cell into a yellow dropdown: Today, This Week, This/Last Month, This/Last Quarter, Year to Date, This/Last Year, Fiscal Year to Date, This/Last Fiscal Year, Last 7/30/90 Days, Next 30 Days. The cell to its right shows the dates (for example *01-Apr-26 to 31-Mar-27*).
 - **Using it.** In a region, put the picker cell as the filter of a date field, for example Posting Date = `[B2]`. The add-in sends the period as `yyyy-mm-dd..yyyy-mm-dd`, and `AK Workbook Data Service.LocalizeIsoDates` rewrites each date in the user's own date format before `SetFilter`. Choosing another period refreshes every region that points to the picker. A BC date filter typed into the picker cell (`01-04-26..30-06-26`) is passed on as typed.
@@ -169,6 +177,7 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 
 | Version | Date | Change |
 |---|---|---|
+| 1.8.0.0 | 2026-11-26 | Stage 5 **drill-down**: Ctrl+click, right-click *Open in Business Central* or region bar *Open* opens the record of a region row (Page Management) or, in a budget grid, the G/L Budget Entries / G/L Entries behind an amount (totaling accounts included). New codeunit 89007. |
 | 1.7.2.0 | 2026-11-26 | *Update region* always reloads the region where it is (never on a new sheet). After changing a region, clicking an empty cell switches the panel back to *At <cell>* (not *New sheet*). |
 | 1.7.1.0 | 2026-11-26 | Fix: with the region or budget panel open, clicking another cell now moves the target to that cell (*New region at A4*); before, the panel kept the first cell or updated the last inserted region. A region or grid can no longer be inserted on a period picker cell. The region bar now follows mouse clicks reliably (selection is read from the `set-selections` operation). |
 | 1.7.0.0 | 2026-11-26 | Stage 4 **period picker**: dropdown cell with 16 periods (calendar and fiscal), dates shown beside it; date filters that point to it get the period and refresh on change; AL localizes ISO dates in date filters (`LocalizeIsoDates`); work date in the add-in configuration. |

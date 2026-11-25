@@ -323,6 +323,7 @@
         case 'period-picker': insertPeriodPicker(); break;
         case 'region-props': if (activeRegion()) { if (isBudget(activeRegion())) openBudgetPanel(activeRegion()); else openRegionPanel(activeRegion()); } break;
         case 'region-refresh': if (activeRegion()) refreshOne(activeRegion().id); break;
+        case 'region-open': drillAt(selectedCell()); break;
         case 'region-remove': if (activeRegion()) unlinkSource(activeRegion().id); break;
         case 'view-combine': togglePanel('combine'); break;
         case 'view-recon': togglePanel('recon'); break;
@@ -479,6 +480,9 @@
       if (evt && evt.id === 'sheet.operation.set-selections') onSelectionMoved();
     }));
 
+    // Ctrl+click (Cmd+click on Mac) on a cell opens it in BC (drill-down); the selection operation that follows tells which cell.
+    ui.sheet.addEventListener('pointerdown', function (e) { state.ctrlClick = (e.ctrlKey || e.metaKey) && e.button === 0 ? Date.now() : 0; }, true);
+
     // Univer listens to window resize; BC resizes the iframe but the panel changes our own width.
     try {
       state.disposables.push(state.api.addEvent(state.api.Event.SelectionChanged, onSelectionMoved));
@@ -499,6 +503,10 @@
   var onSelectionMoved = H.debounce(function () {
     guard(updateRegionBar)();
     guard(followSelectionInPanels)();
+    if (state.ctrlClick && Date.now() - state.ctrlClick < 1500) {
+      state.ctrlClick = 0;
+      guard(function () { drillAt(selectedCell()); })();
+    }
   }, 80);
 
   function workbook() {
@@ -821,6 +829,7 @@
     source.filters = fields.filter(function (f) { return state.fieldState[f.no].filter; })
       .map(function (f) { return { fieldNo: f.no, filter: state.fieldState[f.no].filter }; });
     source.maxRows = maxRows;
+    source.keyCount = state.table.fields.filter(function (f) { return f.pk; }).length;
     source.editable = isEditing();
     if (source.editable && !wasEditable) source.editing = true;
     if (!source.editable) { delete source.orig; delete source.ver; delete source.columns; source.editing = undefined; }
@@ -1770,6 +1779,8 @@
       (s.filters && s.filters.length ? ' &middot; ' + s.filters.length + (s.filters.length === 1 ? ' filter' : ' filters') : '') + '</span>' +
       refs + editSwitch +
       '<span class="ak-rbar__sp"></span>' +
+      '<span class="ak-rbar__hint" title="Ctrl+click a row or amount to open it in Business Central">Ctrl+click to open in BC</span>' +
+      '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="region-open" title="Open the selected row or amount in Business Central">' + H.icon('link') + '<span>Open</span></button>' +
       '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="region-props">' + H.icon('sliders') + '<span>Properties</span></button>' +
       '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="region-refresh">' + H.icon('refresh') + '<span>Refresh</span></button>' +
       '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="region-remove" title="Stop linking this range to BC (the data stays)">' + H.icon('unlink') + '<span>Unlink</span></button>';
@@ -1825,6 +1836,7 @@
       try { api.createMenu({ id: id, title: title, tooltip: title, order: order, action: function () { guard(fn)(); return true; } }).appendTo('contextMenu.mainArea|contextMenu.others'); }
       catch (e) { /* menus optional */ }
     };
+    add('ak.drill', 'Open in Business Central (Ctrl+click)', function () { drillAt(selectedCell()); }, 0);
     add('ak.region.insert', 'Insert Business Central region here', function () { openRegionPanel(null); }, 0);
     add('ak.budget.insert', 'Insert budget grid here', function () { openBudgetPanel(null); }, 1);
     add('ak.period.insert', 'Insert period picker here', function () { insertPeriodPicker(); }, 1);
@@ -2480,6 +2492,47 @@
   /** Picker cells that changed: update their date text (regions using them refresh through the cell references). */
   function onSlicerCells(sheetId, cells) {
     cells.forEach(function (x) { var p = slicerAt(sheetId, x.r, x.c); if (p) showSlicerDates(p); });
+  }
+
+  // =====================================================================================
+  // Stage 5: drill-down (Ctrl+click or right-click > Open in Business Central)
+  // =====================================================================================
+  /** Opens the BC page behind a cell: the record of a region row, or the entries behind a budget / actual amount. */
+  function drillAt(cell) {
+    var s = regionAt(cell.sheetId, cell.row, cell.col);
+    if (!s) { H.toast('info', 'Ctrl+click a cell inside a Business Central region to open it in BC.'); return; }
+    var a = anchorOf(s), sheet = workbook().getSheetBySheetId(s.sheetId);
+    if (cell.row <= a.row) { H.toast('info', 'Ctrl+click a data row (not the header) to open it.'); return; }
+    if (isBudget(s)) { drillBudget(s, sheet, cell); return; }
+    var fields = s.columns || s.fields || [];
+    var keyIdx = [];
+    fields.forEach(function (f, i) { if (f.pk) keyIdx.push(i); });
+    if (!keyIdx.length || keyIdx.length < (s.keyCount || keyIdx.length)) {
+      H.toast('warning', 'Add the key fields of ' + s.tableCaption + ' to the region (Properties > Key) to open its records.');
+      return;
+    }
+    var row = sheet.getRange(cell.row, a.col, 1, fields.length).getRawValues()[0];
+    var key = keyIdx.map(function (i) { return toBC(fields[i].type, row[i]); });
+    if (key.some(function (v) { return v === ''; }) && !s.editable) { H.toast('info', 'This row has no key values, so there is no record to open.'); return; }
+    sendDrill({ kind: 'record', tableNo: s.tableNo, keyFields: keyIdx.map(function (i) { return fields[i].no; }), key: key });
+  }
+
+  function drillBudget(s, sheet, cell) {
+    var a = anchorOf(s), m = s.budgetMeta, p = s.periodsDef, c = cell.col - a.col;
+    var account = String(sheet.getRange(cell.row, a.col, 1, 1).getValue() || '');
+    if (!account) return;
+    var shift = function (iso) { var d = new Date(iso + 'T00:00:00Z'); d.setUTCFullYear(d.getUTCFullYear() - 1); return isoDate(d); };
+    var req = { budgetName: s.budget.budgetName, account: account, dim1Filter: budgetFilterValue(s, 'dim1'), dim2Filter: budgetFilterValue(s, 'dim2') };
+    if (c >= 2 && c < 2 + m.n) { req.kind = 'budget'; req.start = p[c - 2].start; req.end = p[c - 2].end; }
+    else if (c === m.totalCol || c < 2) { req.kind = 'budget'; req.start = p[0].start; req.end = p[m.n - 1].end; }
+    else if (m.ly && c >= m.lyStart && c < m.lyStart + m.n) { req.kind = 'actual'; req.start = shift(p[c - m.lyStart].start); req.end = shift(p[c - m.lyStart].end); }
+    else if (m.ly && c === m.lyTotalCol) { req.kind = 'actual'; req.start = shift(p[0].start); req.end = shift(p[m.n - 1].end); }
+    else return;
+    sendDrill(req);
+  }
+
+  function sendDrill(req) {
+    H.sendChunked('drill', JSON.stringify(req), state.config.chunkSize).catch(reportError);
   }
 
   // =====================================================================================

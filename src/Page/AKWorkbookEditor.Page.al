@@ -182,6 +182,8 @@ page 89001 "AK Workbook Editor"
                 LoadBudget(Payload);
             'budgetwrite':
                 WriteBudget(Payload);
+            'drill':
+                DrillDown(Payload);
             'export':
                 begin
                     Workbook.Get(WorkbookCode);
@@ -222,6 +224,22 @@ page 89001 "AK Workbook Editor"
             exit;
         end;
         SendPayload('budgetresult', BudgetService.WriteChanges(Payload));
+    end;
+
+    /// <summary>Stage 5: opens the BC page behind a cell (record card, budget entries or G/L entries).</summary>
+    local procedure DrillDown(Payload: Text)
+    begin
+        ClearLastError();
+        if not TryDrillDown(Payload) then
+            CurrPage.Workbook.ShowToast('error', GetLastErrorText());
+    end;
+
+    [TryFunction]
+    local procedure TryDrillDown(Payload: Text)
+    var
+        WorkbookDrillDown: Codeunit "AK Workbook Drill Down";
+    begin
+        WorkbookDrillDown.Open(Payload);
     end;
 
     [TryFunction]
