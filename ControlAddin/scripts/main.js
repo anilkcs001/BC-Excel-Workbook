@@ -82,10 +82,11 @@
       '      <span class="ak-bar__sep" aria-hidden="true"></span>' +
       '      <button class="ak-btn ak-btn--outline" data-act="view-combine" aria-controls="ak-panel" title="Join two sheets on matching keys">' + H.icon('merge') + '<span>Combine</span></button>' +
       '      <button class="ak-btn ak-btn--outline" data-act="view-recon" aria-controls="ak-panel" title="Reconcile books against a statement, GSTR-2B or party ledger">' + H.icon('scale') + '<span>Reconcile</span></button>' +
-      '      <button class="ak-btn ak-btn--primary" data-act="view-data" aria-controls="ak-panel" title="Load a Business Central table">' + H.icon('database') + '<span>Get data</span></button>' +
+      '      <button class="ak-btn ak-btn--primary" data-act="insert-region" aria-controls="ak-panel" title="Put a Business Central table at the selected cell (also on the right-click menu)">' + H.icon('database') + '<span>Insert region</span></button>' +
       '    </div>' +
       '    <input type="file" id="ak-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>' +
       '  </header>' +
+      '  <div class="ak-regionbar" id="ak-regionbar" hidden></div>' +
       '  <div class="ak-progress" id="ak-progress" hidden><div class="ak-progress__bar" id="ak-progress-bar"></div></div>' +
       '  <div class="ak-body">' +
       '    <main class="ak-sheet" id="ak-sheet"></main>' +
@@ -97,7 +98,7 @@
 
     var ids = ['app', 'sheet', 'panel', 'dirty', 'title', 'code', 'file', 'bar-sources', 'progress', 'progress-bar', 'boot',
       'table-search', 'table-results', 'table-picked', 'step-fields', 'field-search', 'field-list', 'field-count',
-      'max-rows', 'sheet-name', 'load', 'load-hint', 'source-list', 'edit', 'edit-wrap', 'edit-why', 'write', 'write-count',
+      'max-rows', 'sheet-name', 'load', 'load-hint', 'source-list', 'edit', 'edit-wrap', 'edit-why', 'regionbar', 'dest-cell', 'dest-wrap', 'region-target', 'load-label', 'write', 'write-count',
       'j-left', 'j-right', 'j-keys', 'j-cols', 'j-name', 'j-run', 'j-hint', 'j-status', 'j-case', 'autosave',
       'r-left', 'r-right', 'r-llabel', 'r-rlabel', 'r-keys', 'r-norm', 'r-group', 'r-lamt', 'r-lminus', 'r-ramt', 'r-rminus',
       'r-flip', 'r-tol', 'r-ldate', 'r-rdate', 'r-ad', 'r-days', 'r-lextra', 'r-rextra', 'r-name', 'r-summary', 'r-run', 'r-hint', 'r-tip'];
@@ -116,7 +117,9 @@
 
   function dataViewHtml() {
     return '<section class="ak-view" data-view="data" aria-label="Get data from Business Central">' +
-      panelHead('Get data', 'Any table you can read in Business Central') +
+      '<div class="ak-panel__head"><div><div class="ak-panel__title">Business Central region</div>' +
+      '<div class="ak-panel__sub" id="ak-region-target">New region</div></div>' +
+      '<button class="ak-icon-btn" data-act="panel-close" aria-label="Close panel">' + H.icon('x') + '</button></div>' +
       '<div class="ak-panel__scroll">' +
       '  <section class="ak-step">' +
       '    <div class="ak-step__label"><span class="ak-step__num">1</span>Table</div>' +
@@ -137,7 +140,8 @@
       '      <button class="ak-link" data-act="fields-none">None</button>' +
       '    </div>' +
       '    <div class="ak-field-list" id="ak-field-list"></div>' +
-      '    <p class="ak-help">Filters use Business Central syntax: <code>&gt;0</code>, <code>10000..20000</code>, <code>&lt;&gt;&#39;&#39;</code>, <code>A*|B*</code>, <code>01-04-26..31-03-27</code></p>' +
+      '    <p class="ak-help">Filters use Business Central syntax: <code>&gt;0</code>, <code>10000..20000</code>, <code>&lt;&gt;&#39;&#39;</code>, <code>A*|B*</code>, <code>01-04-26..31-03-27</code>. ' +
+      'Put <code>[B1]</code> to take the filter from a cell (also <code>[B1]..[C1]</code> or <code>[Sheet1!B1]</code>): change the cell and the region refreshes.</p>' +
       '  </section>' +
       '  <section class="ak-step">' +
       '    <div class="ak-step__label"><span class="ak-step__num">3</span>Output</div>' +
@@ -145,22 +149,22 @@
       '      <label class="ak-field"><span>Sheet name</span><input id="ak-sheet-name" class="ak-input" maxlength="31" placeholder="Table name"></label>' +
       '      <label class="ak-field"><span>Max rows</span><input id="ak-max-rows" class="ak-input" type="number" min="1" step="1000"></label>' +
       '    </div>' +
-      '    <div class="ak-seg" role="radiogroup" aria-label="Destination">' +
-      '      <label><input type="radio" name="ak-dest" value="new" checked><span>New sheet</span></label>' +
-      '      <label><input type="radio" name="ak-dest" value="active"><span>Replace active sheet</span></label>' +
+      '    <div class="ak-seg" role="radiogroup" aria-label="Where" id="ak-dest-wrap">' +
+      '      <label><input type="radio" name="ak-dest" value="here" checked><span>At <b id="ak-dest-cell">A1</b></span></label>' +
+      '      <label><input type="radio" name="ak-dest" value="new"><span>New sheet</span></label>' +
       '    </div>' +
       '    <label class="ak-check ak-edit-opt" id="ak-edit-wrap" hidden><input type="checkbox" id="ak-edit">' +
       '<span><b>Allow editing</b><br>Change values in the sheet and use <b>Save to BC</b>. Key and calculated fields stay locked.' +
       '<span class="ak-edit-why" id="ak-edit-why" hidden></span></span></label>' +
       '  </section>' +
       '  <section class="ak-step ak-step--sources">' +
-      '    <div class="ak-step__label">' + H.icon('link') + 'Linked sheets</div>' +
+      '    <div class="ak-step__label">' + H.icon('link') + 'Regions and linked sheets</div>' +
       '    <ul class="ak-sources" id="ak-source-list"></ul>' +
       '  </section>' +
       '</div>' +
       '<div class="ak-panel__foot">' +
       '  <span class="ak-panel__hint" id="ak-load-hint">Pick a table to start</span>' +
-      '  <button class="ak-btn ak-btn--primary ak-btn--lg" id="ak-load" disabled>' + H.icon('database') + '<span>Load data</span></button>' +
+      '  <button class="ak-btn ak-btn--primary ak-btn--lg" id="ak-load" disabled>' + H.icon('database') + '<span id="ak-load-label">Insert region</span></button>' +
       '</div></section>';
   }
 
@@ -308,6 +312,10 @@
         case 'import': chooseImportFile(); break;
         case 'export': requestExport(); break;
         case 'view-data': togglePanel('data'); break;
+        case 'insert-region': openRegionPanel(null); break;
+        case 'region-props': if (activeRegion()) openRegionPanel(activeRegion()); break;
+        case 'region-refresh': if (activeRegion()) refreshOne(activeRegion().id); break;
+        case 'region-remove': if (activeRegion()) unlinkSource(activeRegion().id); break;
         case 'view-combine': togglePanel('combine'); break;
         case 'view-recon': togglePanel('recon'); break;
         case 'r-add-key': state.recon.keys.push({ left: state.recon.left[0] || '', right: state.recon.right[0] || '' }); renderReconKeys(); break;
@@ -384,6 +392,9 @@
     });
     ui.loadBtn.addEventListener('click', loadFromPanel);
     ui.edit.addEventListener('change', function () { renderFields(); updateLoadState(); });
+    ui.regionbar.addEventListener('change', function (e) {
+      if (e.target.hasAttribute('data-region-edit') && activeRegion()) setRegionEditing(activeRegion(), e.target.checked);
+    });
 
     // Combine view
     ui.jLeft.addEventListener('change', function () { onCombineSheetsChanged(); });
@@ -458,6 +469,12 @@
     }));
 
     // Univer listens to window resize; BC resizes the iframe but the panel changes our own width.
+    try {
+      state.disposables.push(state.api.addEvent(state.api.Event.SelectionChanged, H.debounce(function () { guard(updateRegionBar)(); }, 80)));
+      state.disposables.push(state.api.addEvent(state.api.Event.ActiveSheetChanged, function () { setTimeout(guard(updateRegionBar), 50); }));
+    } catch (e) { /* events optional */ }
+    registerMenus();
+
     var kick = H.debounce(function () { window.dispatchEvent(new Event('resize')); }, 60);
     if (window.ResizeObserver) {
       state.resizeObserver = new ResizeObserver(kick);
@@ -474,6 +491,7 @@
   function newEmptyWorkbook() {
     withoutDirty(function () {
       state.api.createWorkbook({ id: H.uid('wb'), name: 'Workbook', locale: window.AKUniver.LocaleType.EN_US });
+      excelLook(workbook().getActiveSheet());
     });
   }
 
@@ -486,6 +504,13 @@
       snapshot.locale = window.AKUniver.LocaleType.EN_US;
       state.api.createWorkbook(snapshot);
     });
+  }
+
+  /** Excel-like defaults for a new sheet: Calibri 11 and light gridlines. */
+  function excelLook(sheet) {
+    if (!sheet) return;
+    try { sheet.setDefaultStyle({ ff: 'Calibri', fs: 11 }); } catch (e) { /* optional */ }
+    try { sheet.setGridLinesColor('#D4D4D4'); } catch (e) { /* optional */ }
   }
 
   function withoutDirty(fn) {
@@ -566,12 +591,14 @@
     ui.app.classList.toggle('is-panel-open', open);
     ui.panel.setAttribute('data-view', target);
     ['data', 'combine', 'recon'].forEach(function (v) {
-      var b = ui.app.querySelector('[data-act=view-' + v + ']');
+      var b = ui.app.querySelector(v === 'data' ? '[data-act=insert-region]' : '[data-act=view-' + v + ']');
       b.setAttribute('aria-expanded', String(open && target === v));
       b.classList.toggle('is-active', open && target === v);
     });
     if (!open) return;
     if (target === 'data') {
+      if (!state.regionEdit) state.regionAnchor = selectedCell();
+      renderRegionTarget();
       renderSources();
       if (!state.table) {
         if (!state.tables.length) requestTables('');
@@ -657,6 +684,16 @@
     ui.editWhy.textContent = data.canEdit ? '' : (data.editReason || 'This table cannot be edited from a workbook.');
     ui.fieldSearch.value = '';
     state.fieldSearch = '';
+    // Region properties: start from the region's own fields, filters, rows and editing choice.
+    var pre = state.prefill;
+    if (pre && pre.tableNo === data.tableNo) {
+      data.fields.forEach(function (f) { state.fieldState[f.no].checked = false; });
+      pre.fields.forEach(function (f) { if (state.fieldState[f.no]) state.fieldState[f.no].checked = true; });
+      (pre.filters || []).forEach(function (f) { if (state.fieldState[f.fieldNo]) state.fieldState[f.fieldNo].filter = f.filter; });
+      ui.maxRows.value = pre.maxRows || state.config.defaultMaxRows;
+      ui.edit.checked = !!(pre.editable && data.canEdit);
+    }
+    state.prefill = null;
     renderFields();
     updateLoadState();
     if (!data.canRead) H.toast('warning', 'You can see this table but do not have permission to read its data.');
@@ -725,47 +762,58 @@
     maxRows = Math.min(maxRows, state.config.maxRowsLimit);
     ui.maxRows.value = maxRows;
 
-    var dest = (ui.panel.querySelector('input[name=ak-dest]:checked') || {}).value || 'new';
     var wb = workbook();
-    var sheet;
-    if (dest === 'active') {
-      sheet = wb.getActiveSheet();
-      var oldDims = state.sources[sheet.getSheetId()] || state.joins[sheet.getSheetId()] || state.recons[sheet.getSheetId()];
-      if (oldDims && oldDims.lastRows) withoutDirty(function () { sheet.getRange(0, 0, oldDims.lastRows, oldDims.lastCols).clearContent(); });
-      delete state.joins[sheet.getSheetId()];
-      delete state.recons[sheet.getSheetId()];
-      if (ui.sheetName.value && sheet.getSheetName() !== ui.sheetName.value) {
-        try { sheet.setName(uniqueSheetName(ui.sheetName.value)); } catch (e) { /* keep old name */ }
-      }
-    } else {
+    var existing = state.regionEdit && state.sources[state.regionEdit];
+    var dest = (ui.panel.querySelector('input[name=ak-dest]:checked') || {}).value || 'here';
+    var sheet, anchor, createdSheetId = null;
+    if (existing) {
+      sheet = wb.getSheetBySheetId(existing.sheetId);
+      anchor = anchorOf(existing);
+    } else if (dest === 'new') {
       sheet = wb.insertSheet(uniqueSheetName(ui.sheetName.value || state.table.tableCaption));
+      excelLook(sheet);
+      anchor = { row: 0, col: 0 };
+      createdSheetId = sheet.getSheetId();
+    } else {
+      var t = state.regionAnchor || selectedCell();
+      sheet = wb.getSheetBySheetId(t.sheetId) || wb.getActiveSheet();
+      anchor = { row: t.row, col: t.col };
+      var clash = regionAt(sheet.getSheetId(), anchor.row, anchor.col);
+      if (clash) { H.toast('error', 'This cell is inside region ' + clash.tableCaption + '. Pick an empty cell, or use Properties to change that region.'); return; }
+      if (state.joins[sheet.getSheetId()] || state.recons[sheet.getSheetId()]) { H.toast('error', 'This sheet is a combined or reconciled result. Put the region on another sheet.'); return; }
     }
     wb.setActiveSheet(sheet);
 
-    var source = {
-      sheetId: sheet.getSheetId(),
-      tableNo: state.table.tableNo,
-      tableCaption: state.table.tableCaption,
-      fields: fields.map(function (f) { return { no: f.no, caption: f.caption, type: f.type, pk: !!f.pk }; }),
-      filters: fields.filter(function (f) { return state.fieldState[f.no].filter; })
-        .map(function (f) { return { fieldNo: f.no, filter: state.fieldState[f.no].filter }; }),
-      maxRows: maxRows,
-      editable: isEditing(),
-      lastRows: 0,
-      lastCols: 0
+    var source = existing || { id: H.uid('rg'), sheetId: sheet.getSheetId(), anchor: anchor, lastRows: 0, lastCols: 0 };
+    var wasEditable = !!source.editable;
+    source.tableNo = state.table.tableNo;
+    source.tableCaption = state.table.tableCaption;
+    source.fields = fields.map(function (f) { return { no: f.no, caption: f.caption, type: f.type, pk: !!f.pk }; });
+    source.filters = fields.filter(function (f) { return state.fieldState[f.no].filter; })
+      .map(function (f) { return { fieldNo: f.no, filter: state.fieldState[f.no].filter }; });
+    source.maxRows = maxRows;
+    source.editable = isEditing();
+    if (source.editable && !wasEditable) source.editing = true;
+    if (!source.editable) { delete source.orig; delete source.ver; delete source.columns; source.editing = undefined; }
+    try { parseRefs(source); } catch (e) { H.toast('error', e.message); return; }
+
+    var finish = function () {
+      runSource(source).then(function (res) {
+        H.toast(res.truncated ? 'warning' : 'success', res.truncated
+          ? 'Loaded the first ' + H.formatInt(res.loaded) + ' of ' + H.formatInt(res.total) + ' rows. Raise Max rows or add filters.'
+          : 'Loaded ' + H.formatInt(res.loaded) + ' rows from ' + source.tableCaption + ' at ' + regionLabel(source) + '.');
+        state.regionEdit = source.id;
+        renderRegionTarget();
+        updateRegionBar();
+        if (window.innerWidth < 900) togglePanel(false);
+      }, function () {
+        if (!createdSheetId) return;
+        var w = workbook(), sh = w && w.getSheetBySheetId(createdSheetId);
+        if (sh && w.getSheets().length > 1) withoutDirty(function () { w.deleteSheet(sh); });
+      });
     };
-    var createdSheetId = dest === 'new' ? source.sheetId : null;
-    runSource(source).then(function (res) {
-      H.toast(res.truncated ? 'warning' : 'success', res.truncated
-        ? 'Loaded the first ' + H.formatInt(res.loaded) + ' of ' + H.formatInt(res.total) + ' rows. Raise Max rows or add filters.'
-        : 'Loaded ' + H.formatInt(res.loaded) + ' rows from ' + source.tableCaption + '.');
-      if (window.innerWidth < 900) togglePanel(false);
-    }, function () {
-      // Error already shown; remove the empty sheet we created for this load.
-      if (!createdSheetId) return;
-      var w = workbook(), s = w && w.getSheetBySheetId(createdSheetId);
-      if (s && w.getSheets().length > 1) withoutDirty(function () { w.deleteSheet(s); });
-    });
+    if (existing) confirmDiscard([existing]).then(function (ok) { if (ok) finish(); });
+    else finish();
   }
 
   /** Requests data for a source and writes it to its sheet. Resolves with {loaded,total,truncated}. */
@@ -775,11 +823,13 @@
     return new Promise(function (resolve, reject) {
       state.pending[requestId] = { source: source, columns: null, rows: [], resolve: resolve, reject: reject };
       setProgress(-1);
+      var filters;
+      try { filters = resolveFilters(source); } catch (e) { failRequest(requestId, e.message); return; }
       H.invoke('OnDataRequested', [JSON.stringify({
         requestId: requestId,
         tableNo: source.tableNo,
         fields: source.fields.map(function (f) { return f.no; }),
-        filters: source.filters,
+        filters: filters,
         maxRows: source.maxRows,
         editable: !!source.editable
       })]).catch(function (e) { failRequest(requestId, e.message || String(e)); });
@@ -820,13 +870,23 @@
         values.forEach(function (row) { row.push(''); });
       }
       p.source.editable = p.editable;
-      applying(function () { writeTable(p.source, header, types, values); });
+      // A region never grows into the next region below it.
+      var room = roomBelow(p.source);
+      if (values.length + 1 > room) {
+        H.toast('warning', 'Only ' + H.formatInt(Math.max(room - 1, 0)) + ' rows fit above the next region. Move that region down or add filters.');
+        values = values.slice(0, Math.max(room - 1, 0));
+        if (p.versions) p.versions = p.versions.slice(0, values.length);
+      }
+      applying(function () {
+        var sheet = writeTable(p.source, header, types, values);
+        styleRegion(p.source, sheet, values.length + 1, header.length);
+      });
       if (p.editable) setupEditable(p.source, columns, values, p.versions, p.canInsert);
       p.source.filterText = p.filterText || '';
       p.source.loadedAt = new Date().toISOString();
       p.source.total = chunk.total;
       p.source.truncated = chunk.truncated;
-      state.sources[p.source.sheetId] = p.source;
+      state.sources[p.source.id] = p.source;
       renderSources();
       renderBarSources();
       p.resolve({ loaded: chunk.loaded, total: chunk.total, truncated: chunk.truncated });
@@ -865,48 +925,61 @@
     var sheet = wb.getSheetBySheetId(target.sheetId);
     if (!sheet) {
       sheet = wb.insertSheet(uniqueSheetName(target.tableCaption || target.name || 'Data'));
+      excelLook(sheet);
       target.sheetId = sheet.getSheetId();
     }
+    var a = target.anchor || { row: 0, col: 0 };
     var nCols = header.length, nRows = rows.length + 1;
 
-    if (target.lastRows && target.lastCols) sheet.getRange(0, 0, target.lastRows, target.lastCols).clearContent();
-    if (sheet.getMaxRows() < nRows + 50) sheet.insertRowsAfter(sheet.getMaxRows() - 1, nRows + 50 - sheet.getMaxRows());
-    if (sheet.getMaxColumns() < nCols + 5) sheet.insertColumnsAfter(sheet.getMaxColumns() - 1, nCols + 5 - sheet.getMaxColumns());
+    if (target.lastRows && target.lastCols) sheet.getRange(a.row, a.col, target.lastRows, target.lastCols).clearContent();
+    if (target._end && target._end > a.row + (target.lastRows || 0) - 1) {
+      // Rows saved below an editable region since the last load belong to the region too.
+      var extra = target._end - (a.row + (target.lastRows || 1) - 1);
+      if (extra > 0) sheet.getRange(a.row + target.lastRows, a.col, extra, target.lastCols || nCols).clearContent();
+    }
+    if (sheet.getMaxRows() < a.row + nRows + 50) sheet.insertRowsAfter(sheet.getMaxRows() - 1, a.row + nRows + 50 - sheet.getMaxRows());
+    if (sheet.getMaxColumns() < a.col + nCols + 5) sheet.insertColumnsAfter(sheet.getMaxColumns() - 1, a.col + nCols + 5 - sheet.getMaxColumns());
 
     var values = new Array(nRows);
     values[0] = header.slice();
     for (var r = 0; r < rows.length; r++) values[r + 1] = rows[r];
-    sheet.getRange(0, 0, nRows, nCols).setValues(values);
+    sheet.getRange(a.row, a.col, nRows, nCols).setValues(values);
 
-    var head = sheet.getRange(0, 0, 1, nCols);
+    var head = sheet.getRange(a.row, a.col, 1, nCols);
     head.setFontWeight('bold');
-    head.setBackgroundColor('#EBF3FC');
-    head.setFontColor('#0F3D6E');
-    sheet.setFrozenRows(1);
+    head.setBackgroundColor('#4472C4');
+    head.setFontColor('#FFFFFF');
+    if (a.row === 0) sheet.setFrozenRows(1);
 
     if (rows.length) {
       types.forEach(function (t, c) {
         var fmt = NUMBER_FORMATS[t];
-        if (fmt) { try { sheet.getRange(1, c, rows.length, 1).setNumberFormat(fmt); } catch (e) { /* numfmt optional */ } }
-        if (NUMERIC_TYPES[t]) { try { sheet.getRange(0, c, 1, 1).setHorizontalAlignment('right'); } catch (e) { /* optional */ } }
+        if (fmt) { try { sheet.getRange(a.row + 1, a.col + c, rows.length, 1).setNumberFormat(fmt); } catch (e) { /* numfmt optional */ } }
+        if (NUMERIC_TYPES[t]) { try { sheet.getRange(a.row, a.col + c, 1, 1).setHorizontalAlignment('right'); } catch (e) { /* optional */ } }
       });
     }
-    autoWidth(sheet, header, types, rows);
+    autoWidth(sheet, header, types, rows, a.col);
 
-    try {
-      var existing = sheet.getFilter && sheet.getFilter();
-      if (existing) existing.remove();
-      sheet.getRange(0, 0, Math.max(nRows, 2), nCols).createFilter();
-    } catch (e) { /* filter preset optional */ }
-    try { sheet.getRange(0, 0, 1, 1).activate(); } catch (e) { /* keep selection */ }
+    // Univer allows one auto-filter per sheet: give it to the region when it is alone on its sheet.
+    var alone = !target.id || regionsOn(sheet.getSheetId()).filter(function (o) { return o.id !== target.id; }).length === 0;
+    if (alone) {
+      try {
+        var existing = sheet.getFilter && sheet.getFilter();
+        if (existing) existing.remove();
+        sheet.getRange(a.row, a.col, Math.max(nRows, 2), nCols).createFilter();
+      } catch (e) { /* filter preset optional */ }
+    }
+    try { sheet.getRange(a.row, a.col, 1, 1).activate(); } catch (e) { /* keep selection */ }
 
     target.lastRows = nRows;
     target.lastCols = nCols;
     target.rowCount = rows.length;
+    target._end = a.row + rows.length;
     return sheet;
   }
 
-  function autoWidth(sheet, header, types, rows) {
+  function autoWidth(sheet, header, types, rows, startCol) {
+    startCol = startCol || 0;
     var sample = Math.min(rows.length, 200);
     header.forEach(function (cap, c) {
       var t = types[c], len = String(cap).length + 2;
@@ -915,7 +988,7 @@
         var l = t === 'Date' ? 11 : t === 'DateTime' ? 17 : NUMERIC_TYPES[t] ? String(Math.round(+v || 0)).length + 6 : String(v == null ? '' : v).length;
         if (l > len) len = l;
       }
-      sheet.setColumnWidths(c, 1, Math.max(64, Math.min(320, len * 7.5 + 18)));
+      sheet.setColumnWidths(startCol + c, 1, Math.max(64, Math.min(320, len * 7.5 + 18)));
     });
   }
 
@@ -936,7 +1009,13 @@
     Object.keys(map).forEach(function (id) { if (!wb.getSheetBySheetId(id)) delete map[id]; });
     return Object.keys(map).map(function (id) { return map[id]; });
   }
-  function sourceList() { return workbook() ? pruneMissing(state.sources) : []; }
+  /** BC regions (keyed by region id; several may share a sheet). Regions whose sheet was deleted are dropped. */
+  function sourceList() {
+    var wb = workbook();
+    if (!wb) return [];
+    Object.keys(state.sources).forEach(function (id) { if (!wb.getSheetBySheetId(state.sources[id].sheetId)) delete state.sources[id]; });
+    return Object.keys(state.sources).map(function (id) { return state.sources[id]; });
+  }
   function joinList() { return workbook() ? pruneMissing(state.joins) : []; }
   function reconList() { return workbook() ? pruneMissing(state.recons) : []; }
   function derivedList() {
@@ -975,6 +1054,7 @@
 
   function refreshOne(sheetId) {
     if (state.busy) return;
+    // id is a region id (BC regions) or a sheet id (combined / reconciled sheets).
     var s = state.sources[sheetId], j = state.joins[sheetId], rc = state.recons[sheetId];
     if (s) confirmDiscard([s]).then(function (ok) {
       if (ok) runSource(s).then(function (r) { H.toast('success', s.tableCaption + ': ' + H.formatInt(r.loaded) + ' rows.'); }, function () { });
@@ -987,17 +1067,24 @@
   }
 
   function unlinkSource(sheetId) {
+    var region = state.sources[sheetId];
+    if (region && region.bandRuleId) {
+      try { workbook().getSheetBySheetId(region.sheetId).deleteConditionalFormattingRule(region.bandRuleId); } catch (e) { /* optional */ }
+    }
     delete state.sources[sheetId];
-    updateWriteButton();
+    updateWriteButton(); updateRegionBar();
     delete state.joins[sheetId];
     delete state.recons[sheetId];
     renderSources(); renderBarSources(); setDirty(true);
     H.toast('info', 'Sheet unlinked. Its data stays but will not refresh.');
   }
 
-  function activateSheet(sheetId) {
-    var wb = workbook(), sheet = wb && wb.getSheetBySheetId(sheetId);
-    if (sheet) wb.setActiveSheet(sheet);
+  function activateSheet(id) {
+    var region = state.sources[id];
+    var wb = workbook(), sheet = wb && wb.getSheetBySheetId(region ? region.sheetId : id);
+    if (!sheet) return;
+    wb.setActiveSheet(sheet);
+    if (region) { try { sheet.getRange(anchorOf(region).row, anchorOf(region).col, 1, 1).activate(); } catch (e) { /* optional */ } }
   }
 
   function sheetName(sheetId) {
@@ -1008,7 +1095,7 @@
   function renderSources() {
     var sources = sourceList(), joins = joinList(), recons = reconList();
     if (!sources.length && !joins.length && !recons.length) {
-      ui.sourceList.innerHTML = '<li class="ak-list__empty">Sheets you load from Business Central appear here and refresh with one click.</li>';
+      ui.sourceList.innerHTML = '<li class="ak-list__empty">Regions you insert from Business Central appear here and refresh with one click.</li>';
       return;
     }
     var item = function (id, name, meta, badge) {
@@ -1024,7 +1111,7 @@
       return iso ? ' &middot; ' + new Date(iso).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
     };
     ui.sourceList.innerHTML = sources.map(function (s) {
-      return item(s.sheetId, sheetName(s.sheetId),
+      return item(s.id, regionLabel(s) + ' \u00b7 ' + s.tableCaption,
         H.escapeHtml(s.tableCaption) + ' &middot; ' + H.formatInt(s.rowCount) + ' rows' +
         (s.filters.length ? ' &middot; ' + s.filters.length + ' filter' + (s.filters.length > 1 ? 's' : '') : '') + when(s.loadedAt), '');
     }).concat(joins.map(function (j) {
@@ -1040,25 +1127,147 @@
   }
 
   // =====================================================================================
-  // Stage 1: editable sheets (write-back to Business Central)
+  // Regions (Stage 1b): a Business Central table placed at any cell, many per sheet
   //
-  // A sheet loaded with "Allow editing" keeps a copy of every loaded row by primary key (orig) and
-  // the record's SystemModifiedAt (ver). On each edit the sheet is compared with that copy:
-  //   - an existing key with different values in editable columns -> 'modify'
-  //   - a row whose key is not in the copy (typed below the data)  -> 'insert'
-  // Key, calculated and system columns are locked: an edit there is put back at once.
-  // Save to BC sends the changes to AL, which validates each field like the standard page and
-  // answers per row; the BC Status column shows "Saved" or BC's own error message.
+  // A region is a "source" with an anchor cell. Its header is at the anchor, its rows below it.
+  // Regions move when rows or columns are inserted or deleted above / left of them.
+  // Filters may point to a cell, e.g. [B1] or [Sheet 1!B1]; changing that cell refreshes the region.
   // =====================================================================================
-  var EDIT_COLORS = { locked: '#F3F2F1', lockedText: '#605E5C', changed: '#FFF4CE', added: '#E7F6EC', head: '#EBF3FC', statusHead: '#323130' };
+  var XL = { head: '#4472C4', headText: '#FFFFFF', lockedHead: '#8EA9DB', band: '#D9E1F2', border: '#8EA9DB', statusHead: '#305496' };
+
+  function anchorOf(s) { return s.anchor || { row: 0, col: 0 }; }
+  function regionWidth(s) { return s.lastCols || ((s.fields || []).length + (s.editable ? 1 : 0)); }
+  function regionEndRow(s) { return Math.max(anchorOf(s).row + Math.max(s.lastRows || 1, 1) - 1, s._end || 0); }
+  function regionsOn(sheetId) {
+    return sourceList().filter(function (s) { return s.sheetId === sheetId; }).sort(function (a, b) {
+      return anchorOf(a).row - anchorOf(b).row || anchorOf(a).col - anchorOf(b).col;
+    });
+  }
+  /** The first region on a sheet. Combine and Reconcile read this one when they use a sheet. */
+  function srcOf(sheetId) { return regionsOn(sheetId)[0] || null; }
+  function regionAt(sheetId, row, col) {
+    return regionsOn(sheetId).filter(function (s) {
+      var a = anchorOf(s);
+      return row >= a.row && row <= regionEndRow(s) + (s.editable ? 1 : 0) && col >= a.col && col < a.col + regionWidth(s);
+    })[0] || null;
+  }
+  function cellName(row, col) { return H.colLetter(col) + (row + 1); }
+  function regionLabel(s) { var a = anchorOf(s); return sheetName(s.sheetId) + '!' + cellName(a.row, a.col); }
+
+  /** Rows available before the next region below (that overlaps in columns), so a load never overwrites it. */
+  function roomBelow(s) {
+    var a = anchorOf(s), w = regionWidth(s) || 1, limit = Infinity;
+    regionsOn(s.sheetId).forEach(function (o) {
+      if (o === s) return;
+      var b = anchorOf(o), ow = regionWidth(o) || 1;
+      var overlap = b.col < a.col + w && a.col < b.col + ow;
+      if (overlap && b.row > a.row) limit = Math.min(limit, b.row - a.row - 1); // keep one empty row
+    });
+    return limit;
+  }
+
+  function selectedCell() {
+    var wb = workbook(), sheet = wb && wb.getActiveSheet(), sel = sheet && sheet.getSelection && sheet.getSelection();
+    var range = sel && sel.getActiveRange && sel.getActiveRange();
+    if (!range) return { sheetId: sheet ? sheet.getSheetId() : '', row: 0, col: 0 };
+    return { sheetId: sheet.getSheetId(), row: range.getRow(), col: range.getColumn() };
+  }
+
+  // ---------------------------------------------------------------- cell-driven filters
+  var REF_RE = /\[(?:'?([^\]!']+)'?!)?\$?([A-Za-z]{1,3})\$?(\d{1,7})\]/g;
+
+  function parseRefs(source) {
+    var refs = [];
+    (source.filters || []).forEach(function (f) {
+      String(f.filter).replace(REF_RE, function (m, sheet, col, row) {
+        var target = sheet ? workbook().getSheetByName(sheet) : workbook().getSheetBySheetId(source.sheetId);
+        if (!target) throw new Error('The filter ' + m + ' points to a sheet that does not exist.');
+        refs.push({ sheetId: target.getSheetId(), row: +row - 1, col: colIndex(col) });
+        return m;
+      });
+    });
+    return refs;
+  }
+
+  function colIndex(letters) {
+    var c = 0;
+    letters = letters.toUpperCase();
+    for (var i = 0; i < letters.length; i++) c = c * 26 + (letters.charCodeAt(i) - 64);
+    return c - 1;
+  }
+
+  /** Filters with every [cell] replaced by that cell's displayed value (so dates follow the cell's format). */
+  function resolveFilters(source) {
+    return (source.filters || []).map(function (f) {
+      var text = String(f.filter).replace(REF_RE, function (m, sheet) {
+        var target = sheet ? workbook().getSheetByName(sheet) : workbook().getSheetBySheetId(source.sheetId);
+        if (!target) throw new Error('The filter ' + m + ' points to a sheet that does not exist.');
+        var ref = /\$?([A-Za-z]{1,3})\$?(\d{1,7})\]$/.exec(m);
+        var cell = target.getRange(+ref[2] - 1, colIndex(ref[1]), 1, 1);
+        var shown = cell.getDisplayValue ? cell.getDisplayValue() : cell.getValue();
+        return shown == null ? '' : String(shown).trim();
+      });
+      return { fieldNo: f.fieldNo, filter: text };
+    }).filter(function (f) { return f.filter !== ''; });
+  }
+
+  function onRefCellsChanged(sheetId, cells) {
+    sourceList().forEach(function (s) {
+      var refs;
+      try { refs = parseRefs(s); } catch (e) { return; }
+      var hit = refs.some(function (r) { return r.sheetId === sheetId && cells.some(function (c) { return c.r === r.row && c.c === r.col; }); });
+      if (!hit) return;
+      clearTimeout(s._refTimer);
+      s._refTimer = setTimeout(function tick() {
+        if (state.busy) { s._refTimer = setTimeout(tick, 800); return; }
+        if (s.editable && s.editing !== false && diffSource(s).length) {
+          H.toast('warning', regionLabel(s) + ' was not refreshed: it has changes that are not saved to BC yet.');
+          return;
+        }
+        runSource(s).then(function (r) { H.toast('info', s.tableCaption + ' refreshed for the new filter value (' + H.formatInt(r.loaded) + ' rows).'); }, function () { });
+      }, 700);
+    });
+  }
+
+  /** Inserting or deleting rows/columns above or left of a region moves it, like an Excel table. */
+  function shiftRegions(id, params) {
+    var range = params.range || (params.ranges && params.ranges[0]);
+    if (!range || !params.subUnitId) return;
+    var isRow = /row/.test(id), isInsert = /insert/.test(id);
+    var start = isRow ? range.startRow : range.startColumn, end = isRow ? range.endRow : range.endColumn;
+    var count = end - start + 1;
+    regionsOn(params.subUnitId).forEach(function (s) {
+      var a = anchorOf(s), pos = isRow ? a.row : a.col;
+      if (isInsert) {
+        if (start <= pos) pos += count;
+      } else if (end < pos) {
+        pos -= count;
+      } else if (start <= pos) {
+        delete state.sources[s.id];
+        H.toast('warning', 'The header of region ' + s.tableCaption + ' was deleted, so the region was removed. Its data stays as plain cells.');
+        return;
+      }
+      s.anchor = isRow ? { row: pos, col: a.col } : { row: a.row, col: pos };
+    });
+    renderSources(); renderBarSources(); updateRegionBar();
+  }
+
+  // =====================================================================================
+  // Editable regions (write-back to Business Central)
+  //
+  // A region loaded with "Allow editing" keeps a copy of every loaded row by primary key (orig) and
+  // the record's SystemModifiedAt (ver). On each edit the region is compared with that copy:
+  //   - an existing key with different values in editable columns -> 'modify'
+  //   - a row typed directly below the data whose key is not in the copy -> 'insert'
+  // Rows below that contain a formula (totals) end the region and are never sent to BC.
+  // Key, calculated and system columns are locked: an edit there is put back at once.
+  // The region's Editing switch turns all of this off, so the user can just view and use formulas.
+  // =====================================================================================
+  var EDIT_COLORS = { locked: '#F2F2F2', lockedText: '#595959', changed: '#FFF4CE', added: '#E7F6EC' };
   var STATUS_CHANGED = 'Changed', STATUS_NEW = 'New';
 
-  function editableList() { return sourceList().filter(function (s) { return s.editable; }); }
-
-  function sourceBySheet(sheetId) {
-    var s = state.sources[sheetId];
-    return s && s.editable ? s : null;
-  }
+  function isTracking(s) { return !!(s && s.editable && s.editing !== false && s.columns); }
+  function editableList() { return sourceList().filter(isTracking); }
 
   function keyOf(source, row) {
     return source.keyIdx.map(function (i) { return toBC(source.columns[i].type, row[i]); }).join('\u0001');
@@ -1077,8 +1286,7 @@
     if (NUMERIC_TYPES[type]) {
       if (v === '') return '';
       if (typeof v === 'number') return String(Math.round(v * 1e9) / 1e9);
-      var n = String(v).replace(/,/g, '').trim();
-      return n;
+      return String(v).replace(/,/g, '').trim();
     }
     return String(v).trim();
   }
@@ -1092,12 +1300,13 @@
 
   /** Called after an editable load: remembers the loaded rows and paints locked columns. */
   function setupEditable(source, columns, rows, versions, canInsert) {
+    var a = anchorOf(source);
     source.columns = columns.map(function (c) { return { no: c.no, caption: c.caption, type: c.type, pk: !!c.pk, editable: !!c.editable }; });
     source.keyIdx = [];
     source.columns.forEach(function (c, i) { if (c.pk) source.keyIdx.push(i); });
     source.dataCols = source.columns.length;
-    source.statusCol = source.columns.length;
     source.canInsert = !!canInsert;
+    if (source.editing === undefined) source.editing = true;
     source.orig = {};
     source.ver = {};
     source.posKeys = [];
@@ -1105,39 +1314,41 @@
       var k = keyOf(source, r);
       source.orig[k] = r.slice(0, source.dataCols);
       source.ver[k] = (versions && versions[i]) || '';
-      source.posKeys[i + 1] = k;
+      source.posKeys[a.row + 1 + i] = k;
     });
+    source._end = a.row + rows.length;
     source.changeCount = 0;
+    source.marks = [];
     paintBase(source, true);
     updateWriteButton();
   }
 
-  /** Base look: locked columns grey, editable columns white, status column header dark. Clears old change marks. */
+  /** Base look of an editable region: locked columns grey, editable white, status column header dark. */
   function paintBase(source, includeHeader) {
     var sheet = workbook().getSheetBySheetId(source.sheetId);
-    if (!sheet) return;
-    var n = source.dataCols;
-    var rows = Math.max(sheet.getLastRow(), source.paintedRows || 0, 1) + 20;
+    if (!sheet || !source.columns) return;
+    var a = anchorOf(source), n = source.dataCols;
+    // The loaded rows plus a few empty rows for new records (when inserting is allowed); old paint is cleared.
+    var rows = Math.max(regionEndRow(source) - a.row, 1) + (source.canInsert ? 3 : 0);
+    rows = Math.min(rows, Math.max(1, roomBelow(source)));
+    var old = source.paintedRows || 0;
+    if (old > rows) applying(function () { sheet.getRange(a.row + 1 + rows, a.col, old - rows, n + 1).setBackgroundColor('#FFFFFF'); });
     applying(function () {
       source.columns.forEach(function (c, i) {
-        var range = sheet.getRange(1, i, rows, 1);
+        var range = sheet.getRange(a.row + 1, a.col + i, rows, 1);
         range.setBackgroundColor(c.editable ? '#FFFFFF' : EDIT_COLORS.locked);
-        range.setFontColor(c.editable ? '#242424' : EDIT_COLORS.lockedText);
+        range.setFontColor(c.editable ? '#000000' : EDIT_COLORS.lockedText);
         // Number formats also cover the empty rows below, so new rows look like the loaded ones.
         if (NUMBER_FORMATS[c.type]) { try { range.setNumberFormat(NUMBER_FORMATS[c.type]); } catch (e) { /* optional */ } }
-        if (includeHeader) {
-          var h = sheet.getRange(0, i, 1, 1);
-          h.setBackgroundColor(c.editable ? EDIT_COLORS.head : '#E1DFDD');
-        }
+        if (includeHeader) sheet.getRange(a.row, a.col + i, 1, 1).setBackgroundColor(c.editable ? XL.head : XL.lockedHead);
       });
-      var st = sheet.getRange(1, n, rows, 1);
-      st.setBackgroundColor('#FFFFFF');
-      if (includeHeader) sheet.setColumnWidths(n, 1, 340);
+      sheet.getRange(a.row + 1, a.col + n, rows, 1).setBackgroundColor('#FFFFFF');
       if (includeHeader) {
-        var sh = sheet.getRange(0, n, 1, 1);
-        sh.setBackgroundColor(EDIT_COLORS.statusHead);
+        var sh = sheet.getRange(a.row, a.col + n, 1, 1);
+        sh.setBackgroundColor(XL.statusHead);
         sh.setFontColor('#FFFFFF');
         sh.setFontWeight('bold');
+        sheet.setColumnWidths(a.col + n, 1, 300);
       }
     });
     source.paintedRows = rows;
@@ -1149,29 +1360,45 @@
     try { return fn(); } finally { state.applying--; }
   }
 
-  /** Univer mutation hook: protects locked cells and schedules a change check. */
+  /** Univer mutation hook: moves regions, follows filter cells, protects locked cells, schedules change checks. */
   function onSheetMutation(evt) {
     if (state.applying || !evt || !evt.params) return;
-    var id = evt.id, params = evt.params;
-    var source = sourceBySheet(params.subUnitId);
-    if (!source) return;
+    var id = evt.id, params = evt.params, sheetId = params.subUnitId;
+    if (!sheetId) return;
+    if (/sheet\.mutation\.(insert-row|remove-rows|insert-col|remove-col)$/.test(id)) {
+      shiftRegions(id, params);
+      regionsOn(sheetId).filter(isTracking).forEach(function (s) { setTimeout(function () { paintBase(s, false); diffSource(s); }, 0); });
+      return;
+    }
     if (id === 'sheet.mutation.set-range-values' && params.cellValue) {
-      var reverts = [];
+      var touched = [], perRegion = {};
       Object.keys(params.cellValue).forEach(function (rk) {
         var r = +rk, rowCells = params.cellValue[rk];
-        if (r < 1) return;
         Object.keys(rowCells).forEach(function (ck) {
           var c = +ck, cell = rowCells[ck];
-          if (c >= source.dataCols || !cell || !('v' in cell || 'f' in cell || 'p' in cell)) return;
-          var k = source.posKeys[r];
-          if (k != null && source.orig[k] && !source.columns[c].editable) reverts.push({ r: r, c: c, v: source.orig[k][c] });
+          if (!cell || !('v' in cell || 'f' in cell || 'p' in cell || 'si' in cell)) return;
+          touched.push({ r: r, c: c });
+          var s = regionAt(sheetId, r, c);
+          if (!isTracking(s)) return;
+          (perRegion[s.id] = perRegion[s.id] || { s: s, cells: [] }).cells.push({ r: r, c: c });
         });
       });
-      if (reverts.length) setTimeout(function () { revertCells(source, reverts); }, 0);
-      scheduleDiff(source);
-    } else if (/reorder-range|move-rows|remove-rows|insert-row|move-range/.test(id)) {
-      // Rows moved (sort, insert, delete): marks moved with them, so repaint and check again.
-      setTimeout(function () { paintBase(source, false); diffSource(source); }, 0);
+      if (touched.length) onRefCellsChanged(sheetId, touched);
+      Object.keys(perRegion).forEach(function (k) {
+        var s = perRegion[k].s, a = anchorOf(s), reverts = [];
+        perRegion[k].cells.forEach(function (x) {
+          var ci = x.c - a.col, key = s.posKeys[x.r];
+          if (x.r <= a.row || ci >= s.dataCols) return;
+          if (key != null && s.orig[key] && !s.columns[ci].editable) reverts.push({ r: x.r, c: x.c, ci: ci, v: s.orig[key][ci] });
+        });
+        if (reverts.length) setTimeout(function () { revertCells(s, reverts); }, 0);
+        scheduleDiff(s);
+      });
+      return;
+    }
+    if (/reorder-range|move-rows|move-range/.test(id)) {
+      // Rows moved (sort): marks moved with them, so repaint and check again.
+      regionsOn(sheetId).filter(isTracking).forEach(function (s) { setTimeout(function () { paintBase(s, false); diffSource(s); }, 0); });
     }
   }
 
@@ -1181,8 +1408,8 @@
     applying(function () {
       reverts.forEach(function (x) { sheet.getRange(x.r, x.c, 1, 1).setValue(x.v == null ? '' : x.v); });
     });
-    var cols = reverts.map(function (x) { return source.columns[x.c].caption; })
-      .filter(function (v, i, a) { return a.indexOf(v) === i; }).slice(0, 3).join(', ');
+    var cols = reverts.map(function (x) { return source.columns[x.ci].caption; })
+      .filter(function (v, i, arr) { return arr.indexOf(v) === i; }).slice(0, 3).join(', ');
     H.toast('warning', cols + (reverts.length > 1 ? ' are' : ' is') + ' read-only here (key, calculated or system field). The value was put back.');
     scheduleDiff(source);
   }
@@ -1192,20 +1419,35 @@
     source._diffTimer = setTimeout(function () { diffSource(source); }, 350);
   }
 
-  /** Compares the sheet with the loaded rows. Returns the list of changes and marks them in the sheet. */
+  /**
+   * Compares the region with the loaded rows and marks the differences. Returns the list of changes.
+   * Below the loaded rows the region continues while rows have typed values; it stops at the first
+   * empty row, a row with a formula (a totals row) or the next region.
+   */
   function diffSource(source) {
     var sheet = workbook() && workbook().getSheetBySheetId(source.sheetId);
-    if (!sheet || !source.columns) return [];
-    var n = source.dataCols, last = sheet.getLastRow();
-    var raw = last >= 1 ? sheet.getRange(1, 0, last, n + 1).getRawValues() : [];
-    var changes = [], seen = {}, posKeys = [];
-    raw.forEach(function (full, i) {
-      var r = i + 1, row = full.slice(0, n), status = full[n];
+    if (!sheet || !isTracking(source)) { if (source) { source.changeCount = 0; updateWriteButton(); } return []; }
+    var a = anchorOf(source), n = source.dataCols;
+    var loadedEnd = a.row + (source.rowCount || 0);
+    var lastAllowed = Math.min(sheet.getLastRow(), a.row + roomBelow(source));
+    var count = Math.max(0, lastAllowed - a.row);
+    var raw = count ? sheet.getRange(a.row + 1, a.col, count, n + 1).getRawValues() : [];
+    var formulas = [];
+    try { formulas = count ? sheet.getRange(a.row + 1, a.col, count, n).getFormulas() : []; } catch (e) { formulas = []; }
+    var changes = [], seen = {}, posKeys = [], end = a.row;
+    for (var i = 0; i < raw.length; i++) {
+      var r = a.row + 1 + i, full = raw[i], row = full.slice(0, n), status = full[n];
+      var hasFormula = (formulas[i] || []).some(function (f) { return !!f; });
       var empty = row.every(function (v) { return v == null || v === ''; });
+      if (r > loadedEnd && (empty || hasFormula)) {
+        if (empty && (status === STATUS_NEW || status === STATUS_CHANGED)) changes.push({ r: r, op: 'clear' });
+        break;
+      }
       if (empty) {
         if (status === STATUS_NEW || status === STATUS_CHANGED) changes.push({ r: r, op: 'clear' });
-        return;
+        continue;
       }
+      end = r;
       var k = keyOf(source, row), orig = source.orig[k];
       if (orig && !seen[k]) {
         seen[k] = true;
@@ -1214,41 +1456,48 @@
         source.columns.forEach(function (c, ci) { if (c.editable && !sameValue(c.type, row[ci], orig[ci])) cols.push(ci); });
         if (cols.length) changes.push({ r: r, op: 'modify', key: k, row: row, cols: cols, status: status });
         else if (status === STATUS_CHANGED) changes.push({ r: r, op: 'clear' });
-      } else {
+      } else if (r > loadedEnd && !hasFormula) {
         var filled = [];
         source.columns.forEach(function (c, ci) { if ((c.editable || c.pk) && row[ci] !== '' && row[ci] != null) filled.push(ci); });
-        changes.push({ r: r, op: 'insert', row: row, cols: filled, status: status });
+        changes.push(source.canInsert
+          ? { r: r, op: 'insert', row: row, cols: filled, status: status }
+          : { r: r, op: 'blocked', status: status });
       }
-    });
+    }
     source.posKeys = posKeys;
+    source._end = end;
     markChanges(source, sheet, changes);
-    var real = changes.filter(function (x) { return x.op !== 'clear'; });
+    var real = changes.filter(function (x) { return x.op === 'modify' || x.op === 'insert'; });
     source.changeCount = real.length;
     updateWriteButton();
     return real;
   }
 
   function markChanges(source, sheet, changes) {
-    var n = source.dataCols;
+    var a = anchorOf(source), n = source.dataCols;
     applying(function () {
       (source.marks || []).forEach(function (m) {
-        var c = source.columns[m.c];
-        if (c) sheet.getRange(m.r, m.c, 1, 1).setBackgroundColor(c.editable ? '#FFFFFF' : EDIT_COLORS.locked);
+        var c = source.columns[m.ci];
+        if (c) sheet.getRange(m.r, a.col + m.ci, 1, 1).setBackgroundColor(c.editable ? '#FFFFFF' : EDIT_COLORS.locked);
       });
       source.marks = [];
       changes.forEach(function (x) {
-        if (x.op === 'clear') { sheet.getRange(x.r, n, 1, 1).setValue(''); return; }
+        var cell = sheet.getRange(x.r, a.col + n, 1, 1);
+        if (x.op === 'clear') { cell.setValue(''); return; }
+        if (x.op === 'blocked') {
+          cell.setValue('Not saved: new records are not allowed for this table');
+          cell.setFontColor('#A4262C');
+          return;
+        }
         if (source.marks.length > 3000) return;
         var color = x.op === 'insert' ? EDIT_COLORS.added : EDIT_COLORS.changed;
         var cols = x.op === 'insert' ? source.columns.map(function (c, i) { return i; }) : x.cols;
         cols.forEach(function (ci) {
-          sheet.getRange(x.r, ci, 1, 1).setBackgroundColor(color);
-          source.marks.push({ r: x.r, c: ci });
+          sheet.getRange(x.r, a.col + ci, 1, 1).setBackgroundColor(color);
+          source.marks.push({ r: x.r, ci: ci });
         });
-        var label = x.op === 'insert' ? STATUS_NEW : STATUS_CHANGED;
         if (!x.status || x.status === STATUS_CHANGED || x.status === STATUS_NEW || /^Saved/.test(String(x.status))) {
-          var cell = sheet.getRange(x.r, n, 1, 1);
-          cell.setValue(label);
+          cell.setValue(x.op === 'insert' ? STATUS_NEW : STATUS_CHANGED);
           cell.setFontColor(x.op === 'insert' ? '#0E700E' : '#835B00');
         }
       });
@@ -1257,14 +1506,50 @@
 
   function updateWriteButton() {
     if (!ui.write) return;
-    var total = editableList().reduce(function (t, s) { return t + (s.changeCount || 0); }, 0);
-    ui.write.hidden = editableList().length === 0;
+    var list = editableList();
+    var total = list.reduce(function (t, s) { return t + (s.changeCount || 0); }, 0);
+    ui.write.hidden = list.length === 0;
     ui.write.disabled = total === 0 || state.busy;
     ui.writeCount.textContent = total ? String(total) : '';
     ui.writeCount.hidden = !total;
   }
 
-  /** Toolbar "Save to BC": writes every editable sheet that has changes, one sheet after the other. */
+  /** Region Editing switch: off = view and formulas only (nothing tracked or sent); on = changes are tracked again. */
+  function setRegionEditing(source, on) {
+    if (!source || !source.editable) return;
+    source.editing = on;
+    var sheet = workbook().getSheetBySheetId(source.sheetId);
+    if (!on && sheet) {
+      // Hide the marks; the copy of the loaded rows is kept, so turning it on again shows any differences.
+      applying(function () {
+        (source.marks || []).forEach(function (m) {
+          var c = source.columns[m.ci];
+          if (c) sheet.getRange(m.r, anchorOf(source).col + m.ci, 1, 1).setBackgroundColor(c.editable ? '#FFFFFF' : EDIT_COLORS.locked);
+        });
+      });
+      source.marks = [];
+      source.changeCount = 0;
+      clearStatusLabels(source, sheet);
+    }
+    if (on) diffSource(source);
+    updateWriteButton(); updateRegionBar(); renderSources(); setDirty(true);
+    H.toast('info', on ? 'Editing is on for ' + source.tableCaption + '. Changes are marked and can be saved to BC.'
+      : 'Editing is off for ' + source.tableCaption + '. Use the data and formulas freely; nothing is sent to BC.');
+  }
+
+  /** Removes the Changed / New labels from the BC Status column (other statuses stay). */
+  function clearStatusLabels(source, sheet) {
+    var a = anchorOf(source), n = source.dataCols, rows = Math.max(regionEndRow(source) - a.row, 0) + 3;
+    if (!rows) return;
+    var st = sheet.getRange(a.row + 1, a.col + n, rows, 1).getRawValues();
+    applying(function () {
+      st.forEach(function (v, i) {
+        if (v[0] === STATUS_CHANGED || v[0] === STATUS_NEW) sheet.getRange(a.row + 1 + i, a.col + n, 1, 1).setValue('');
+      });
+    });
+  }
+
+  /** Toolbar "Save to BC": writes every editable region that has changes, one after the other. */
   function saveToBC() {
     if (state.busy) return;
     var work = editableList().map(function (s) { return { source: s, changes: diffSource(s) }; })
@@ -1298,16 +1583,16 @@
   function writeSource(source, changes) {
     var limit = 1000;
     if (changes.length > limit) {
-      H.toast('warning', 'Saving the first ' + limit + ' rows of ' + sheetName(source.sheetId) + '. Click Save to BC again for the rest.');
+      H.toast('warning', 'Saving the first ' + limit + ' rows of ' + regionLabel(source) + '. Click Save to BC again for the rest.');
       changes = changes.slice(0, limit);
     }
-    var keyNos = source.keyIdx.map(function (i) { return source.columns[i].no; });
     var payload = {
       requestId: 'w' + (++state.requestSeq),
       sheetId: source.sheetId,
+      regionId: source.id,
       tableNo: source.tableNo,
       fields: source.columns.map(function (c) { return c.no; }),
-      keyFields: keyNos,
+      keyFields: source.keyIdx.map(function (i) { return source.columns[i].no; }),
       changes: changes.map(function (x) {
         return {
           row: x.r,
@@ -1342,15 +1627,16 @@
       return;
     }
     var sheet = workbook().getSheetBySheetId(source.sheetId);
-    var n = source.dataCols, time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    var a = anchorOf(source), n = source.dataCols, time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     applying(function () {
       (res.results || []).forEach(function (r) {
-        var st = sheet.getRange(r.row, n, 1, 1);
+        var st = sheet.getRange(r.row, a.col + n, 1, 1);
         if (r.ok) {
           var values = source.columns.map(function (c, i) { return convertValue(c.type, r.values[i]); });
-          sheet.getRange(r.row, 0, 1, n).setValues([values]);
+          sheet.getRange(r.row, a.col, 1, n).setValues([values]);
           var change = w.changes.filter(function (x) { return x.r === r.row; })[0];
           if (change && change.op === 'modify') { delete source.orig[change.key]; delete source.ver[change.key]; }
+          if (change && change.op === 'insert' && r.row > a.row + (source.rowCount || 0)) source.rowCount = r.row - a.row;
           var k = keyOf(source, values);
           source.orig[k] = values;
           source.ver[k] = r.version || '';
@@ -1362,19 +1648,134 @@
         }
       });
     });
+    source.lastRows = Math.max(source.lastRows || 0, (source.rowCount || 0) + 1);
     setDirty(true);
     diffSource(source);
     w.resolve({ saved: res.saved || 0, failed: res.failed || 0 });
   }
 
-  /** Before a refresh replaces an editable sheet: ask when it still has unsaved BC changes. */
+  /** Before a refresh replaces an editable region: ask when it still has unsaved BC changes. */
   function confirmDiscard(sources) {
-    var pending = sources.filter(function (s) { return s.editable && diffSource(s).length; });
+    var pending = sources.filter(function (s) { return isTracking(s) && diffSource(s).length; });
     if (!pending.length) return Promise.resolve(true);
     var n = pending.reduce(function (t, s) { return t + s.changeCount; }, 0);
     return H.choose(n + (n === 1 ? ' row has' : ' rows have') + ' changes that are not saved to Business Central. Refresh replaces them with the data from BC.',
       [{ label: 'Refresh and discard', value: true, primary: true }], 'Unsaved BC changes')
       .then(function (v) { return v === true; });
+  }
+
+  // ---------------------------------------------------------------- region bar (shown when the selection is in a region)
+  function updateRegionBar() {
+    if (!ui.regionbar) return;
+    var cell = workbook() ? selectedCell() : null;
+    var s = cell && regionAt(cell.sheetId, cell.row, cell.col);
+    state.activeRegion = s ? s.id : null;
+    if (!s) { ui.regionbar.hidden = true; ui.app.classList.remove('has-regionbar'); return; }
+    var editSwitch = s.editable
+      ? '<label class="ak-rswitch" title="Off: view and use formulas only, nothing is sent to BC"><input type="checkbox" data-region-edit' + (s.editing !== false ? ' checked' : '') + '>' +
+        '<span class="ak-switch" aria-hidden="true"></span><span>Editing</span></label>'
+      : '<span class="ak-rtag ak-rtag--ro">' + H.icon('lock') + 'Read-only</span>';
+    var refs = '';
+    try { refs = parseRefs(s).length ? '<span class="ak-rtag" title="A filter takes its value from a cell; change the cell and the region refreshes">' + H.icon('link') + 'Cell filter</span>' : ''; } catch (e) { refs = ''; }
+    ui.regionbar.innerHTML =
+      '<span class="ak-rbar__icon">' + H.icon('table') + '</span>' +
+      '<span class="ak-rbar__name">' + H.escapeHtml(s.tableCaption) + '</span>' +
+      '<span class="ak-rbar__meta">' + H.escapeHtml(regionLabel(s)) + ' &middot; ' + H.formatInt(s.rowCount || 0) + ' rows' +
+      (s.filters && s.filters.length ? ' &middot; ' + s.filters.length + (s.filters.length === 1 ? ' filter' : ' filters') : '') + '</span>' +
+      refs + editSwitch +
+      '<span class="ak-rbar__sp"></span>' +
+      '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="region-props">' + H.icon('sliders') + '<span>Properties</span></button>' +
+      '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="region-refresh">' + H.icon('refresh') + '<span>Refresh</span></button>' +
+      '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="region-remove" title="Stop linking this range to BC (the data stays)">' + H.icon('unlink') + '<span>Unlink</span></button>';
+    ui.regionbar.hidden = false;
+    ui.app.classList.add('has-regionbar');
+  }
+
+  function activeRegion() { return state.activeRegion ? state.sources[state.activeRegion] : null; }
+
+  // ---------------------------------------------------------------- Excel-style region look
+  /** Excel "Table Style Medium 2" look: blue header, thin border, banded rows for read-only regions. */
+  function styleRegion(source, sheet, nRows, nCols) {
+    var a = anchorOf(source), api = state.api;
+    try {
+      var head = sheet.getRange(a.row, a.col, 1, nCols);
+      head.setBackgroundColor(XL.head);
+      head.setFontColor(XL.headText);
+      head.setFontWeight('bold');
+    } catch (e) { /* optional */ }
+    try {
+      // Clear the border of the previous load first (the region may have shrunk), then draw the new one.
+      if (source.styledArea) {
+        // Univer also stores an edge on the neighbouring cell, so clear one row below and one column right as well.
+        sheet.getRange(a.row, a.col, source.styledArea.rows + 1, source.styledArea.cols + 1)
+          .setBorder(api.Enum.BorderType.NONE, api.Enum.BorderStyleTypes.NONE);
+      }
+      var all = sheet.getRange(a.row, a.col, Math.max(nRows, 1), nCols);
+      all.setBorder(api.Enum.BorderType.OUTSIDE, api.Enum.BorderStyleTypes.THIN, XL.border);
+      source.styledArea = { rows: Math.max(nRows, 1), cols: nCols };
+    } catch (e) { /* borders optional */ }
+    // Banding through one conditional-format rule, removed and re-added on every load.
+    try {
+      if (source._bandRule) { sheet.deleteConditionalFormattingRule(source._bandRule); source._bandRule = null; }
+      (sheet.getConditionalFormattingRules() || []).forEach(function (rule) {
+        if (source.bandRuleId && rule.cfId === source.bandRuleId) sheet.deleteConditionalFormattingRule(rule.cfId);
+      });
+      source.bandRuleId = null;
+      if (!source.editable && nRows > 2) {
+        var body = sheet.getRange(a.row + 1, a.col, nRows - 1, nCols);
+        var rule = sheet.newConditionalFormattingRule().whenFormulaSatisfied('=MOD(ROW()-' + (a.row + 1) + ',2)=1')
+          .setBackground(XL.band).setRanges([body.getRange()]).build();
+        sheet.addConditionalFormattingRule(rule);
+        source.bandRuleId = rule.cfId;
+      }
+    } catch (e) { /* banding optional */ }
+  }
+
+  // ---------------------------------------------------------------- right-click menu
+  function registerMenus() {
+    var api = state.api;
+    if (!api || !api.createMenu) return;
+    var add = function (id, title, fn, order) {
+      try { api.createMenu({ id: id, title: title, tooltip: title, order: order, action: function () { guard(fn)(); return true; } }).appendTo('contextMenu.mainArea|contextMenu.others'); }
+      catch (e) { /* menus optional */ }
+    };
+    add('ak.region.insert', 'Insert Business Central region here', function () { openRegionPanel(null); }, 0);
+    add('ak.region.props', 'Region properties', function () { var s = regionAtSelection(); if (s) openRegionPanel(s); else H.toast('info', 'Select a cell inside a region first.'); }, 1);
+    add('ak.region.refresh', 'Refresh region', function () { var s = regionAtSelection(); if (s) refreshOne(s.id); else H.toast('info', 'Select a cell inside a region first.'); }, 2);
+  }
+
+  function regionAtSelection() {
+    var c = selectedCell();
+    return regionAt(c.sheetId, c.row, c.col);
+  }
+
+  /** Opens the side panel for a new region at the selected cell (source = null) or to change an existing region. */
+  function openRegionPanel(source) {
+    var wasEditing = !!state.regionEdit;
+    state.regionEdit = source ? source.id : null;
+    if (!source && wasEditing && state.table) resetTablePick();
+    var c = selectedCell();
+    state.regionAnchor = source ? { sheetId: source.sheetId, row: anchorOf(source).row, col: anchorOf(source).col } : c;
+    if (!ui.app.classList.contains('is-panel-open') || ui.panel.getAttribute('data-view') !== 'data') togglePanel('data');
+    renderRegionTarget();
+    if (source) {
+      state.prefill = source;
+      ui.tableSearch.value = '';
+      if (!state.tables.some(function (t) { return t.id === source.tableNo; })) {
+        state.tables.push({ id: source.tableNo, name: source.tableCaption, caption: source.tableCaption });
+      }
+      pickTable(source.tableNo);
+    }
+  }
+
+  function renderRegionTarget() {
+    var editing = state.regionEdit && state.sources[state.regionEdit];
+    var t = state.regionAnchor;
+    var here = t ? sheetName(t.sheetId) + '!' + cellName(t.row, t.col) : 'A1';
+    ui.destCell.textContent = here;
+    ui.regionTarget.textContent = editing ? 'Region ' + editing.tableCaption + ' at ' + regionLabel(editing) : 'New region';
+    ui.destWrap.hidden = !!editing;
+    ui.loadLabel.textContent = editing ? 'Update region' : 'Insert region';
   }
 
   // =====================================================================================
@@ -1384,8 +1785,17 @@
   function readSheetTable(sheetId) {
     var wb = workbook(), sheet = wb.getSheetBySheetId(sheetId);
     if (!sheet) throw new Error('A sheet used by this combine no longer exists.');
-    var lastRow = sheet.getLastRow(), lastCol = sheet.getLastColumn();
     var name = sheet.getSheetName();
+    var region = srcOf(sheetId);
+    if (region && region.lastRows) {
+      // A sheet with a BC region: Combine and Reconcile use that region's block (without the BC Status column).
+      var ra = anchorOf(region), cols = region.dataCols || region.fields.length;
+      var block = sheet.getRange(ra.row, ra.col, Math.max(regionEndRow(region) - ra.row + 1, 1), cols).getRawValues();
+      var rh = block[0].map(function (h, i) { return h == null || h === '' ? 'Column ' + H.colLetter(ra.col + i) : String(h); });
+      var rrows = block.slice(1).filter(function (r) { return r.some(function (v) { return v != null && v !== ''; }); });
+      return { name: name, header: rh, types: columnTypes(sheetId, rh, rrows), rows: rrows, headerRow: 0 };
+    }
+    var lastRow = sheet.getLastRow(), lastCol = sheet.getLastColumn();
     if (lastRow < 0 || lastCol < 0) return { name: name, header: [], types: [], rows: [] };
     var raw = sheet.getRange(0, 0, lastRow + 1, lastCol + 1).getRawValues();
     var hr = isDerivedOrBC(sheetId) ? 0 : detectHeaderRow(raw);
@@ -1416,7 +1826,7 @@
   }
 
   function isDerivedOrBC(sheetId) {
-    return !!(state.sources[sheetId] || state.joins[sheetId] || state.recons[sheetId]);
+    return !!(srcOf(sheetId) || state.joins[sheetId] || state.recons[sheetId]);
   }
 
   /**
@@ -1442,7 +1852,7 @@
   /** Column types: from the BC source or combine definition when known, otherwise inferred. */
   function columnTypes(sheetId, header, rows) {
     var known = {};
-    var src = state.sources[sheetId], jn = state.joins[sheetId];
+    var src = srcOf(sheetId), jn = state.joins[sheetId];
     if (src) src.fields.forEach(function (f) { known[f.caption] = f.type; });
     if (jn && jn.outTypes) jn.outHeader.forEach(function (h, i) { known[h] = jn.outTypes[i]; });
     var rn = state.recons[sheetId];
@@ -1463,8 +1873,9 @@
   function sheetOptions(selectedId) {
     return workbook().getSheets().map(function (s) {
       var id = s.getSheetId();
-      var tag = state.sources[id] ? '  \u00b7  ' + state.sources[id].tableCaption : state.joins[id] ? '  \u00b7  combined' : state.recons[id] ? '  \u00b7  recon' : '';
-      if (state.sources[id] && state.sources[id].tableCaption === s.getSheetName()) tag = '  \u00b7  BC';
+      var src = srcOf(id);
+      var tag = src ? '  \u00b7  ' + src.tableCaption : state.joins[id] ? '  \u00b7  combined' : state.recons[id] ? '  \u00b7  recon' : '';
+      if (src && src.tableCaption === s.getSheetName()) tag = '  \u00b7  BC';
       return '<option value="' + id + '"' + (id === selectedId ? ' selected' : '') + '>' + H.escapeHtml(s.getSheetName() + tag) + '</option>';
     }).join('');
   }
@@ -1512,11 +1923,11 @@
   function suggestKey(L, R, leftId, rightId) {
     var norm = function (x) { return String(x).toLowerCase().replace(/[^a-z0-9]/g, ''); };
     var tableName = function (id) {
-      var src = id && state.sources[id];
+      var src = id && srcOf(id);
       return norm(src ? src.tableCaption : id ? sheetName(id) : '');
     };
     var pkOf = function (id) {
-      var src = id && state.sources[id];
+      var src = id && srcOf(id);
       return src ? src.fields.filter(function (f) { return f.pk; }).map(function (f) { return f.caption; }) : [];
     };
     var lt = tableName(leftId), rt = tableName(rightId), lpk = pkOf(leftId), rpk = pkOf(rightId);
@@ -1799,11 +2210,11 @@
   /** Picks the sheets a template most likely needs: a BC table for the books, an imported sheet for the other side. */
   function pickReconSheets(preset) {
     var sheets = dataSheets(), norm = function (x) { return String(x).toLowerCase().replace(/[^a-z0-9]/g, ''); };
-    var bc = sheets.filter(function (s) { return state.sources[s.getSheetId()]; });
-    var other = sheets.filter(function (s) { var id = s.getSheetId(); return !state.sources[id] && !state.joins[id] && !state.recons[id]; });
+    var bc = sheets.filter(function (s) { return srcOf(s.getSheetId()); });
+    var other = sheets.filter(function (s) { var id = s.getSheetId(); return !srcOf(id) && !state.joins[id] && !state.recons[id]; });
     var left = null;
     (preset && preset.leftSheet || []).some(function (pat) {
-      left = bc.filter(function (s) { return norm(state.sources[s.getSheetId()].tableCaption).indexOf(pat) >= 0; })[0] || null;
+      left = bc.filter(function (s) { return norm(srcOf(s.getSheetId()).tableCaption).indexOf(pat) >= 0; })[0] || null;
       return !!left;
     });
     left = left || bc[0] || sheets[0];
@@ -2104,9 +2515,14 @@
     state.sources = {};
     state.joins = {};
     state.recons = {};
-    (env.sources || []).forEach(function (s) { state.sources[s.sheetId] = s; });
+    (env.sources || []).forEach(function (s) {
+      // Workbooks saved before regions: one source per sheet, at A1.
+      if (!s.id) s.id = 'rg_' + s.sheetId;
+      if (!s.anchor) s.anchor = { row: 0, col: 0 };
+      state.sources[s.id] = s;
+    });
     // Editable sheets: rebuild the row positions and change marks from the saved copy of the loaded rows.
-    setTimeout(function () { editableList().forEach(function (s) { s.marks = []; diffSource(s); }); updateWriteButton(); }, 600);
+    setTimeout(function () { editableList().forEach(function (s) { s.marks = []; diffSource(s); }); updateWriteButton(); updateRegionBar(); }, 600);
     (env.joins || []).forEach(function (j) { state.joins[j.sheetId] = j; });
     (env.recons || []).forEach(function (r) { state.recons[r.sheetId] = r; });
     renderSources(); renderBarSources();
@@ -2379,7 +2795,7 @@
   window.ShowToast = guard(function (level, message) { H.toast(level, message); });
 
   // Exposed for automated tests only.
-  window.AKWorkbookDebug = { state: state, diffSource: diffSource, saveToBC: saveToBC, buildXlsx: buildXlsx, runJoin: runJoin, runRecon: runRecon, importXlsxBuffer: importXlsxBuffer };
+  window.AKWorkbookDebug = { state: state, diffSource: diffSource, saveToBC: saveToBC, updateRegionBar: updateRegionBar, buildXlsx: buildXlsx, runJoin: runJoin, runRecon: runRecon, importXlsxBuffer: importXlsxBuffer };
 
   // =====================================================================================
   // Boot

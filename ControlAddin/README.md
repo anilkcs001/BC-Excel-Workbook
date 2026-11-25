@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This add-in is the whole **AK Workbook Editor** page (`UserControlHost`): a full spreadsheet (Univer) with its own toolbar (AutoSave, Save, Refresh, Import, Export, Combine, Reconcile, Get data), an editable workbook name, and three side panels: Get data (load BC tables), Combine (join sheets) and Reconcile (books vs statement / GSTR-2B / party ledger). It moves workbooks and .xlsx files between the browser and AL.
+This add-in is the whole **AK Workbook Editor** page (`UserControlHost`). It supports Business Central **regions** (a live BC table anchored at any cell, many per sheet, with cell-driven filters and an optional Editing switch for write-back): a full spreadsheet (Univer) with its own toolbar (AutoSave, Save, Refresh, Import, Export, Combine, Reconcile, Get data), an editable workbook name, and three side panels: Get data (load BC tables), Combine (join sheets) and Reconcile (books vs statement / GSTR-2B / party ledger). It moves workbooks and .xlsx files between the browser and AL.
 
 ## Files
 
