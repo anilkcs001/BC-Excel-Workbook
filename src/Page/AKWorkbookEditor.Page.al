@@ -186,6 +186,8 @@ page 89001 "AK Workbook Editor"
                 DrillDown(Payload);
             'formulas':
                 EvaluateFormulas(Payload);
+            'lookups':
+                GetLookups(Payload);
             'export':
                 begin
                     Workbook.Get(WorkbookCode);
@@ -246,6 +248,26 @@ page 89001 "AK Workbook Editor"
             SendPayload('formularesult', Result)
         else
             SendPayload('formularesult', BudgetService.BuildErrorResponse(Payload, GetLastErrorText()));
+    end;
+
+    /// <summary>Stage 8: dropdown values for the editable columns of a region (read only).</summary>
+    local procedure GetLookups(Payload: Text)
+    var
+        Result: Text;
+    begin
+        ClearLastError();
+        if TryGetLookups(Payload, Result) then
+            SendPayload('lookupresult', Result)
+        else
+            SendPayload('lookupresult', BudgetService.BuildErrorResponse(Payload, GetLastErrorText()));
+    end;
+
+    [TryFunction]
+    local procedure TryGetLookups(Payload: Text; var Result: Text)
+    var
+        WorkbookLookups: Codeunit "AK Workbook Lookups";
+    begin
+        Result := WorkbookLookups.GetLookupsJson(Payload);
     end;
 
     [TryFunction]

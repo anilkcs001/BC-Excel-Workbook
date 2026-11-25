@@ -1149,7 +1149,8 @@
           var area = sheet.getRange(g.r, g.c, g.rows + (s.editable ? 2 : 1), g.cols + 1);
           try { var f = sheet.getFilter && sheet.getFilter(); var fr = f && f.getRange && f.getRange();
             if (f && (!fr || (fr.getRow() === g.r && fr.getColumn() === g.c))) f.remove(); } catch (e) { /* no filter */ }
-          try { area.setDataValidation(null); } catch (e) { /* no dropdowns */ }
+          // Dropdowns reach below the rows (room for new lines), so clear them over that height too.
+          try { sheet.getRange(g.r, g.c, Math.max(g.rows + 2, (s.columns ? lookupRows(s) : 0) + 1), g.cols + 1).setDataValidation(null); } catch (e) { /* no dropdowns */ }
           area.clear();
         } finally { state.applying--; }
       });
@@ -1419,6 +1420,7 @@
     source.marks = [];
     paintBase(source, true);
     updateWriteButton();
+    requestLookups(source, true);
   }
 
   /** Base look of an editable region: locked columns grey, editable white, status column header dark. */
@@ -1492,6 +1494,7 @@
           var ci = x.c - a.col, key = s.posKeys[x.r];
           if (x.r <= a.row || ci >= s.dataCols) return;
           if (key != null && s.orig[key] && !s.columns[ci].editable) reverts.push({ r: x.r, c: x.c, ci: ci, v: s.orig[key][ci] });
+          if (s.lookupTypeCols && s.lookupTypeCols.indexOf(ci) >= 0) scheduleLookups(s);
         });
         if (reverts.length) setTimeout(function () { revertCells(s, reverts); }, 0);
         scheduleDiff(s);
@@ -1500,7 +1503,7 @@
     }
     if (/reorder-range|move-rows|move-range/.test(id)) {
       // Rows moved (sort): marks moved with them, so repaint and check again.
-      regionsOn(sheetId).filter(isTracking).forEach(function (s) { setTimeout(function () { paintBase(s, false); diffSource(s); }, 0); });
+      regionsOn(sheetId).filter(isTracking).forEach(function (s) { setTimeout(function () { paintBase(s, false); diffSource(s); }, 0); scheduleLookups(s); });
     }
   }
 
@@ -2699,6 +2702,109 @@
     bcf.cache = {};
     try { state.api.getFormula().executeCalculation(); } catch (e) { /* optional */ }
     return had;
+  }
+
+  // =====================================================================================
+  // Stage 8: dropdown lists on editable columns, like the lookup on a BC page
+  //
+  // After an editable region loads, the add-in asks AL (purpose 'lookups') for the values of its editable
+  // Code and Option columns: option captions, codes of the related table (Unit of Measure, Item Category,
+  // dimension values...), and for Account No. / No. on journal and document lines one list per type
+  // (G/L Account, Customer, Item...), chosen row by row from the type column. Dropdowns allow other values,
+  // so BC still has the last word on save. Lists are kept for 5 minutes; Refresh on a region asks again.
+  // =====================================================================================
+  var lk = { pending: {}, cache: {} };   // pending: requestId -> { regionId, fields }; cache: tableNo -> { resp, fields, at }
+  var LOOKUP_TYPES = { Code: 1, Option: 1 };
+  var LOOKUP_TTL = 5 * 60 * 1000;
+
+  function lookupFields(source) {
+    return (source.columns || []).filter(function (c) { return c.editable && LOOKUP_TYPES[c.type]; }).map(function (c) { return c.no; });
+  }
+
+  function requestLookups(source, force) {
+    if (!isTracking(source) || !state.api || !state.api.newDataValidation) return;
+    var fields = lookupFields(source);
+    if (!fields.length) return;
+    var hit = lk.cache[source.tableNo];
+    if (!force && hit && Date.now() - hit.at < LOOKUP_TTL && fields.every(function (f) { return hit.fields.indexOf(f) >= 0; })) {
+      applyLookups(source);
+      return;
+    }
+    var requestId = H.uid('lk');
+    lk.pending[requestId] = { regionId: source.id, fields: fields };
+    H.sendChunked('lookups', JSON.stringify({ requestId: requestId, tableNo: source.tableNo, fields: fields }), state.config.chunkSize)
+      .catch(function () { delete lk.pending[requestId]; });
+  }
+
+  function onLookupResult(text) {
+    var resp = JSON.parse(text), p = lk.pending[resp.requestId];
+    delete lk.pending[resp.requestId];
+    if (resp.error) { H.toast('warning', 'Dropdown lists could not be loaded: ' + resp.error); return; }
+    if (!p) return;
+    lk.cache[resp.tableNo] = { resp: resp, fields: p.fields, at: Date.now() };
+    sourceList().filter(function (s) { return s.tableNo === resp.tableNo && isTracking(s); }).forEach(applyLookups);
+  }
+
+  function colIndex(source, fieldNo) {
+    for (var i = 0; i < source.columns.length; i++) if (source.columns[i].no === fieldNo) return i;
+    return -1;
+  }
+
+  /** Loaded rows plus room to type new lines (up to the next region below). */
+  function lookupRows(source) {
+    var a = anchorOf(source);
+    var rows = Math.max(regionEndRow(source) - a.row, source.paintedRows || 1, 1) + (source.canInsert ? 20 : 0);
+    return Math.min(rows, Math.max(1, roomBelow(source) - 1));
+  }
+
+  function listValues(resp, key) {
+    var list = key && resp.lists && resp.lists[key];
+    return list ? list.values.map(function (v) { return v[0]; }) : null;
+  }
+
+  function setList(range, values) {
+    try {
+      if (!values || !values.length) { range.setDataValidation(null); return; }
+      // Arrow display (render mode 1): the cell keeps its normal look with a small arrow at the right, like an Excel list.
+      range.setDataValidation(state.api.newDataValidation().requireValueInList(values, false, true).setAllowInvalid(true)
+        .setOptions({ renderMode: 1 }).build());
+    } catch (e) { /* dropdowns optional */ }
+  }
+
+  function applyLookups(source) {
+    var hit = lk.cache[source.tableNo], sheet = workbook() && workbook().getSheetBySheetId(source.sheetId);
+    if (!hit || !sheet || !isTracking(source)) return;
+    var resp = hit.resp, a = anchorOf(source), rows = lookupRows(source);
+    source.lookupTypeCols = [];
+    source.lookupCount = 0;
+    applying(function () {
+      (resp.lookups || []).forEach(function (l) {
+        var ci = colIndex(source, l.field);
+        if (ci < 0 || !source.columns[ci].editable) return;
+        if (l.kind === 'byType') {
+          // One list per run of rows with the same type (Account Type, Type).
+          var ti = colIndex(source, l.typeField);
+          if (ti < 0) return;
+          source.lookupTypeCols.push(ti);
+          var types = sheet.getRange(a.row + 1, a.col + ti, rows, 1).getDisplayValues().map(function (r) { return String(r[0] == null ? '' : r[0]).trim(); });
+          var start = 0;
+          for (var i = 1; i <= rows; i++) {
+            if (i === rows || types[i] !== types[start]) {
+              setList(sheet.getRange(a.row + 1 + start, a.col + ci, i - start, 1), listValues(resp, l.map[types[start] || l.blankType]));
+              start = i;
+            }
+          }
+        } else {
+          setList(sheet.getRange(a.row + 1, a.col + ci, rows, 1), l.values || listValues(resp, l.list));
+        }
+        source.lookupCount++;
+      });
+    });
+  }
+
+  function scheduleLookups(source) {
+    clearTimeout(source._lkTimer);
+    source._lkTimer = setTimeout(guard(function () { applyLookups(source); }), 300);
   }
 
   // =====================================================================================
@@ -3911,7 +4017,7 @@
       state.sources[s.id] = s;
     });
     // Editable sheets: rebuild the row positions and change marks from the saved copy of the loaded rows.
-    setTimeout(function () { editableList().forEach(function (s) { s.marks = []; diffSource(s); }); updateWriteButton(); updateRegionBar(); }, 600);
+    setTimeout(function () { editableList().forEach(function (s) { s.marks = []; diffSource(s); requestLookups(s); }); updateWriteButton(); updateRegionBar(); }, 600);
     (env.joins || []).forEach(function (j) { state.joins[j.sheetId] = j; });
     state.slicers = {};
     (env.slicers || []).forEach(function (p) { state.slicers[p.id] = p; });
@@ -4185,6 +4291,7 @@
     else if (purpose === 'budgetdata') onBudgetData(full);
     else if (purpose === 'budgetresult') onBudgetResult(full);
     else if (purpose === 'formularesult') onFormulaResult(full);
+    else if (purpose === 'lookupresult') onLookupResult(full);
   });
 
   window.RequestSave = guard(function () { requestSave(); });

@@ -18,11 +18,12 @@ It puts a full spreadsheet inside Business Central, on a page that is **only the
 - **open BC from any cell** (Stage 5): Ctrl+click a region row to open its record, or a budget / last-year amount to open the G/L budget entries or G/L entries behind it;
 - **pick a period once for the whole sheet** (Stage 4): a *period picker* cell (This Month, Year to Date, Last Fiscal Year...) drives every region whose date filter points to it;
 - **plan budgets in a grid** (Stage 3): G/L accounts down, months or quarters across, last year's actuals alongside; type amounts (or a yearly total to spread it) and **Save to BC** adds G/L Budget Entries for the differences;
+- **pick codes from dropdowns** (Stage 8): editable Code and Option columns get a list from BC, like the lookup on a page (units of measure, item categories, dimension values; on journal and document lines the Account No. / No. list follows the type on that row);
 - **edit BC data in the sheet and save it back** (Stage 1 write-back): change values or type new rows below the data, then **Save to BC**. Each field goes through BC's own `Validate`, and a *BC Status* column shows *Saved* or BC's error per row. Only tables an admin allows can be edited.
 
 Every command (AutoSave, Save to BC, Save, Refresh, Import, Export, Combine, Reconcile, Insert region) sits in the add-in's own toolbar, with region commands also on the right-click menu and on a region bar that appears when a cell inside a region is selected. The page has no BC fields or action bar. The look follows Excel: Excel green accent, Calibri 11, and regions styled like an Excel table (blue header, thin border, banded rows).
 
-Delivered: Phase 1 (sheet, data explorer, save, refresh, Excel I/O), Phase 2 (Combine), Phase 3 (Reconcile), Stage 1 of the advanced features (editable regions with write-back) Stage 1b (regions anywhere on a sheet, cell-driven filters, Editing switch, Excel look), Stage 2 (journal and document lines), Stage 3 (budget grid), Stage 4 (period picker), Stage 5 (drill-down), Stage 6 (BC functions in formulas) and Stage 7 (charts and KPI cards on the sheet). All planned stages are done.
+Delivered: Phase 1 (sheet, data explorer, save, refresh, Excel I/O), Phase 2 (Combine), Phase 3 (Reconcile), Stage 1 of the advanced features (editable regions with write-back) Stage 1b (regions anywhere on a sheet, cell-driven filters, Editing switch, Excel look), Stage 2 (journal and document lines), Stage 3 (budget grid), Stage 4 (period picker), Stage 5 (drill-down), Stage 6 (BC functions in formulas), Stage 7 (charts and KPI cards on the sheet) and Stage 8 (lookup dropdowns).
 
 ## 2. Object list
 
@@ -42,6 +43,7 @@ Delivered: Phase 1 (sheet, data explorer, save, refresh, Excel I/O), Phase 2 (Co
 | 89006 | Codeunit | AK Workbook Budget Write (one budget cell per run) |
 | 89007 | Codeunit | AK Workbook Drill Down (opens the BC page behind a cell) |
 | 89008 | Codeunit | AK Workbook Formulas (BCGLSUM, BCBUDGET, BCSUM, BCCOUNT, BCVALUE) |
+| 89009 | Codeunit | AK Workbook Lookups (dropdown values for editable columns) |
 | 89000 | PageExtension | AK General Journal (action *Edit in Excel Workbook*) |
 | 89001 | PageExtension | AK Item Journal (action *Edit in Excel Workbook*) |
 | 89002 | PageExtension | AK Sales Order (action *Edit in Excel Workbook*) |
@@ -120,6 +122,15 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 - **Combine and Reconcile** read the first region of a sheet (its block only, without the BC Status column).
 - **Screenshots** (mock data): [panel with a cell filter](docs/images/stage1b-r1-panel.jpg) · [region at A4 with title, filter cell and totals](docs/images/stage1b-r3-two-regions.jpg) · [right-click menu](docs/images/stage1b-r4-context.jpg) · [Editing switched off](docs/images/stage1b-r5-editing-off.jpg).
 
+**Lookup dropdowns (Stage 8, codeunit 89009 "AK Workbook Lookups", main.js "dropdown lists" section).**
+- When an editable region loads, the add-in sends its editable Code and Option field numbers (purpose `lookups`). AL answers with one list per field:
+  - Option / Enum fields: the captions, as BC shows them.
+  - Code fields with a table relation: the codes of the related table (from the `Field` table's *RelationTableNo* / *RelationFieldNo*, or the one-field primary key), with descriptions. Blocked records (Boolean *Blocked*) are left out; G/L accounts are posting accounts only; shortcut dimension fields list only that dimension's values (General Ledger Setup).
+  - Fields whose relation depends on a type on the same line (*Account No.* and *Bal. Account No.* on Gen. Journal Line, *No.* on Sales and Purchase Line): one list per type (G/L Account, Customer, Vendor, Bank Account, Fixed Asset, Employee, IC Partner, Item, Resource, Charge (Item)). The add-in picks the list row by row from the type cell and switches it when the type changes; an empty type uses BC's default (first) type.
+- Lists are set as Excel-style dropdowns (small arrow, search box) on the loaded rows and 20 rows below for new lines. *Allow other values* stays on: BC still validates on Save to BC, so a code missing from a list (or beyond the first 1,000) can still be typed.
+- Only tables the user can read are listed. Lists are fetched on every region load; reopening a saved workbook asks again. *Remove region* also removes the dropdowns.
+- **Screenshot** (mock data): [Account No. dropdown on a General Journal region](docs/images/stage8-l1-dropdown.png).
+
 **Charts and KPI cards on the sheet (Stage 7, main.js "Excel-style charts" section).**
 - Works like Excel: select the data (labels in the first column, series names in the first row, numbers in the rest), then **Insert chart** in the toolbar or right-click > *Insert chart from selection*. The *Insert Chart* dialog shows a live preview of every type: Clustered Column, Clustered Bar, Line with Markers, Area, Pie, Doughnut and KPI Card.
 - The chart is placed next to its data as a floating object over the cells (Univer drawing add-on, float DOM). Drag it to move it; drag a handle to resize it; it stays anchored to the cells. A new chart never lands on top of another one.
@@ -197,6 +208,7 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 - **Regions.** One auto-filter per sheet (Univer limit), so only a region that is alone on its sheet gets filter buttons. Combine and Reconcile use the first region of a sheet. Cell filters use the cell's displayed text, so format date cells the way BC filters expect (for example `dd-mm-yy`).
 - **Combine and Reconcile run in the browser** on the rows already in the sheets (comfortably up to about 100,000 rows per side), and they find columns by header name. If a header is renamed, Refresh reports the missing column; run the template again.
 - **No close prompt.** BC cannot ask "close without saving?" on a `UserControlHost` page. Keep AutoSave on, or save before leaving.
+- **Dropdowns show codes only.** The list shows codes without their descriptions (the spreadsheet dropdown has one text per item) and stops at 1,000 entries per table. Relations with extra conditions other than the type-based ones above (for example a filter on another field) list all codes of the related table; BC still checks the value on save.
 - **Charts stay in BC.** Charts and KPI cards are saved with the workbook but are not written to the exported .xlsx (ExcelJS cannot write charts), and charts in an imported .xlsx are not read. Up to 8 series per chart; no secondary axis, stacked or combo charts.
 - **Excel features not covered:** VBA/macros, pivot tables and Excel data connections. Conditional formatting and data validation work inside BC but are not written to the exported .xlsx.
 - **Excel import** brings values, formulas, styles, widths, merges and freeze panes; it ignores charts, images, comments and theme colours.
@@ -207,6 +219,7 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 
 | Version | Date | Change |
 |---|---|---|
+| 2.2.0.0 | 2026-11-26 | Stage 8 **lookup dropdowns** on editable Code and Option columns, filled from BC: option captions, related-table codes (blocked records left out, posting G/L accounts, one dimension's values), and per-row lists for Account No. / Bal. Account No. on journal lines and No. on sales and purchase lines, following the type cell. New codeunit 89009; permission set updated. |
 | 2.1.2.0 | 2026-11-26 | **Remove region**: the region bar's Unlink button becomes *Remove* (also on the right-click menu) with a choice: clear the region from the sheet, or keep the data and only unlink it. |
 | 2.1.1.0 | 2026-11-26 | **Select region** button in the region bar and right-click menu (whole region, then data rows only). Insert chart on a region cell charts the whole region; chart ranges skip code, date and Yes/No columns and use the first text column as labels. |
 | 2.1.0.0 | 2026-11-26 | Stage 7 reworked to work like Excel: **Insert chart** (toolbar and right-click) with an Insert Chart dialog showing live previews; charts and KPI cards float on the sheet over the cells, move and resize, and are saved in the workbook; Excel chart design (title, gridlines, nice axis, legend, Office colours, data labels); column, bar, line, area, pie, doughnut; chart toolbar (type, labels, change data, rename, delete). The Dashboard strip is removed; old dashboard cards are moved onto the sheet. Univer drawing add-on bundled, all Univer packages pinned to 1.2.0. |
