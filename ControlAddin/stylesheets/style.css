@@ -36,6 +36,10 @@
   --ak-ease: cubic-bezier(.33, 0, .1, 1);
 }
 
+/* Univer opens menus and dropdowns directly under <body>; give them the same font as the rest of the add-in
+   (inside the BC iframe the body has no font of its own, so popups fell back to a serif font). */
+body { font-family: var(--ak-font); font-size: 13px; color: var(--ak-text); }
+
 html, body, #controlAddIn, .ak-host {
   height: 100%;
   width: 100%;
