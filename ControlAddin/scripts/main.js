@@ -37,6 +37,7 @@
     pending: {},            // requestId -> { source, columns, rows, resolve, reject }
     budgetPending: {},      // budget load requestId -> { source, resolve, reject }
     slicers: {},            // period pickers: id -> { sheetId, row, col, kind }
+    dash: { open: false, items: [] }, // Stage 7 dashboard strip (KPI cards and charts)
     writes: {},             // write requestId -> { source, changes, resolve }
     applying: 0,            // > 0 while the add-in itself changes cells (not a user edit)
     requestSeq: 0,
@@ -82,6 +83,7 @@
       '      <button class="ak-btn ak-btn--subtle" data-act="import" title="Open an .xlsx file">' + H.icon('upload') + '<span>Import</span></button>' +
       '      <button class="ak-btn ak-btn--subtle" data-act="export" title="Download as .xlsx">' + H.icon('download') + '<span>Export</span></button>' +
       '      <span class="ak-bar__sep" aria-hidden="true"></span>' +
+      '      <button class="ak-btn ak-btn--outline" data-act="dash-toggle" id="ak-dash-toggle" title="KPI cards and charts from cells, shown above the sheet">' + H.icon('sigma') + '<span>Dashboard</span></button>' +
       '      <button class="ak-btn ak-btn--outline" data-act="view-combine" aria-controls="ak-panel" title="Join two sheets on matching keys">' + H.icon('merge') + '<span>Combine</span></button>' +
       '      <button class="ak-btn ak-btn--outline" data-act="view-recon" aria-controls="ak-panel" title="Reconcile books against a statement, GSTR-2B or party ledger">' + H.icon('scale') + '<span>Reconcile</span></button>' +
       '      <button class="ak-btn ak-btn--primary" data-act="insert-region" aria-controls="ak-panel" title="Put a Business Central table at the selected cell (also on the right-click menu)">' + H.icon('database') + '<span>Insert region</span></button>' +
@@ -89,6 +91,7 @@
       '    <input type="file" id="ak-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>' +
       '  </header>' +
       '  <div class="ak-regionbar" id="ak-regionbar" hidden></div>' +
+      '  <div class="ak-dash" id="ak-dash" hidden></div>' +
       '  <div class="ak-progress" id="ak-progress" hidden><div class="ak-progress__bar" id="ak-progress-bar"></div></div>' +
       '  <div class="ak-body">' +
       '    <main class="ak-sheet" id="ak-sheet"></main>' +
@@ -101,7 +104,7 @@
     var ids = ['app', 'sheet', 'panel', 'dirty', 'title', 'code', 'file', 'bar-sources', 'progress', 'progress-bar', 'boot',
       'table-search', 'table-results', 'table-picked', 'step-fields', 'field-search', 'field-list', 'field-count',
       'max-rows', 'sheet-name', 'load', 'load-hint', 'source-list', 'edit', 'edit-wrap', 'edit-why', 'regionbar', 'dest-cell', 'dest-wrap', 'region-target', 'load-label', 'quick',
-      'b-name', 'b-start', 'b-periods', 'b-acc', 'b-d1', 'b-d2', 'b-d1cap', 'b-d2cap', 'b-ly', 'b-dest-wrap', 'b-dest-cell', 'b-why', 'b-hint', 'b-run', 'b-run-label', 'write', 'write-count',
+      'dash', 'dash-toggle', 'b-name', 'b-start', 'b-periods', 'b-acc', 'b-d1', 'b-d2', 'b-d1cap', 'b-d2cap', 'b-ly', 'b-dest-wrap', 'b-dest-cell', 'b-why', 'b-hint', 'b-run', 'b-run-label', 'write', 'write-count',
       'j-left', 'j-right', 'j-keys', 'j-cols', 'j-name', 'j-run', 'j-hint', 'j-status', 'j-case', 'autosave',
       'r-left', 'r-right', 'r-llabel', 'r-rlabel', 'r-keys', 'r-norm', 'r-group', 'r-lamt', 'r-lminus', 'r-ramt', 'r-rminus',
       'r-flip', 'r-tol', 'r-ldate', 'r-rdate', 'r-ad', 'r-days', 'r-lextra', 'r-rextra', 'r-name', 'r-summary', 'r-run', 'r-hint', 'r-tip'];
@@ -321,6 +324,11 @@
         case 'quick-start': startQuick(btn.getAttribute('data-quick')); break;
         case 'open-budget': openBudgetPanel(null); break;
         case 'period-picker': insertPeriodPicker(); break;
+        case 'dash-toggle': openDash(); break;
+        case 'dash-kpi': addKpi(); break;
+        case 'dash-bar': addChart('bar'); break;
+        case 'dash-line': addChart('line'); break;
+        case 'dash-remove': case 'dash-kind': case 'dash-good': case 'dash-go': onDashClick(act, btn.getAttribute('data-id')); break;
         case 'region-props': if (activeRegion()) { if (isBudget(activeRegion())) openBudgetPanel(activeRegion()); else openRegionPanel(activeRegion()); } break;
         case 'region-refresh': if (activeRegion()) refreshOne(activeRegion().id); break;
         case 'region-open': drillAt(selectedCell()); break;
@@ -401,6 +409,16 @@
     });
     ui.loadBtn.addEventListener('click', loadFromPanel);
     ui.edit.addEventListener('change', function () { renderFields(); updateLoadState(); });
+    ui.dash.addEventListener('focusout', function (e) {
+      var t = e.target.closest('.ak-dcard__title');
+      if (!t) return;
+      var item = state.dash.items.filter(function (x) { return x.id === t.getAttribute('data-id'); })[0];
+      var v = t.textContent.trim();
+      if (item && v && v !== item.title) { item.title = v.substring(0, 80); setDirty(true); }
+    });
+    ui.dash.addEventListener('keydown', function (e) {
+      if (e.target.classList.contains('ak-dcard__title') && e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+    });
     ui.regionbar.addEventListener('change', function (e) {
       if (e.target.hasAttribute('data-region-edit') && activeRegion()) setRegionEditing(activeRegion(), e.target.checked);
     });
@@ -475,7 +493,7 @@
 
     state.disposables.push(state.api.addEvent(state.api.Event.CommandExecuted, function (evt) {
       if (evt && evt.type === MUTATION && state.suppressDirty === 0) setDirty(true);
-      if (evt && evt.type === MUTATION) onSheetMutation(evt);
+      if (evt && evt.type === MUTATION) { onSheetMutation(evt); scheduleDash(); }
       // Clicking a cell runs this operation; it is the reliable signal that the selection moved.
       if (evt && evt.id === 'sheet.operation.set-selections') onSelectionMoved();
     }));
@@ -1840,6 +1858,8 @@
       catch (e) { /* menus optional */ }
     };
     add('ak.drill', 'Open in Business Central (Ctrl+click)', function () { drillAt(selectedCell()); }, 0);
+    add('ak.dash.kpi', 'Add KPI card from selection', function () { addKpi(); }, 4);
+    add('ak.dash.chart', 'Add chart from selection', function () { addChart('bar'); }, 5);
     add('ak.region.insert', 'Insert Business Central region here', function () { openRegionPanel(null); }, 0);
     add('ak.budget.insert', 'Insert budget grid here', function () { openBudgetPanel(null); }, 1);
     add('ak.period.insert', 'Insert period picker here', function () { insertPeriodPicker(); }, 1);
@@ -2635,6 +2655,212 @@
   }
 
   // =====================================================================================
+  // Stage 7: dashboard strip with KPI cards and charts drawn from cell ranges
+  //
+  // Items live in state.dash.items: { id, type: 'kpi' | 'chart', sheetId, r, c, rows, cols, title, kind, good }.
+  // A KPI card shows one cell (and, when two cells were selected, the change against the second one).
+  // A chart reads a block: first column = labels, first row = series names, the rest = numbers.
+  // The strip re-draws whenever cells change (including formula results such as BC functions).
+  // =====================================================================================
+  var DASH_COLORS = ['#4472C4', '#ED7D31', '#A5A5A5', '#FFC000', '#5B9BD5', '#70AD47'];
+
+  function dashItems() { return state.dash.items; }
+
+  function selectionBlock() {
+    var wb = workbook(), sheet = wb.getActiveSheet(), sel = sheet.getSelection && sheet.getSelection();
+    var range = sel && sel.getActiveRange && sel.getActiveRange();
+    var g = range && range.getRange ? range.getRange() : null;
+    if (!g) return { sheetId: sheet.getSheetId(), r: 0, c: 0, rows: 1, cols: 1 };
+    return { sheetId: sheet.getSheetId(), r: g.startRow, c: g.startColumn, rows: g.endRow - g.startRow + 1, cols: g.endColumn - g.startColumn + 1 };
+  }
+
+  function cellText(sheetId, r, c) {
+    var sheet = workbook().getSheetBySheetId(sheetId);
+    if (!sheet || r < 0 || c < 0) return '';
+    var v = sheet.getRange(r, c, 1, 1).getValue();
+    return v == null ? '' : String(v).trim();
+  }
+
+  /** KPI title: the text to the left of the cell, else the header above it. */
+  function guessTitle(b) {
+    var left = cellText(b.sheetId, b.r, b.c - 1);
+    if (left && isNaN(+left.replace(/,/g, ''))) {
+      var head = cellText(b.sheetId, b.r - 1, b.c) || cellText(b.sheetId, findHeaderRow(b), b.c);
+      return head && isNaN(+head.replace(/,/g, '')) ? left + ' · ' + head : left;
+    }
+    var above = cellText(b.sheetId, b.r - 1, b.c);
+    return above && isNaN(+above.replace(/,/g, '')) ? above : sheetName(b.sheetId) + '!' + cellName(b.r, b.c);
+  }
+  function findHeaderRow(b) { for (var r = b.r - 1; r >= 0 && r >= b.r - 30; r--) { var t = cellText(b.sheetId, r, b.c); if (t && isNaN(+t.replace(/,/g, ''))) return r; } return -1; }
+
+  function addKpi() {
+    var b = selectionBlock();
+    var item = { id: H.uid('kp'), type: 'kpi', sheetId: b.sheetId, r: b.r, c: b.c, rows: 1, cols: 1, title: guessTitle(b), good: 'up' };
+    if (b.cols >= 2 || b.rows >= 2) item.cmp = b.cols >= 2 ? { r: b.r, c: b.c + 1 } : { r: b.r + 1, c: b.c };
+    if (item.cmp) item.cmpTitle = cellText(b.sheetId, findHeaderRow({ sheetId: b.sheetId, r: item.cmp.r, c: item.cmp.c }), item.cmp.c) || 'compared';
+    dashItems().push(item);
+    openDash(true);
+    setDirty(true);
+    H.toast('success', 'KPI card added from ' + cellName(b.r, b.c) + (item.cmp ? ' (compared with ' + cellName(item.cmp.r, item.cmp.c) + ')' : '') + '. Click its title to rename it.');
+  }
+
+  function addChart(kind) {
+    var b = selectionBlock();
+    if (b.rows < 2 && b.cols < 2) { H.toast('info', 'Select a block first: labels in the first column, series names in the first row, numbers in the rest (for example A4:D7).'); return; }
+    var item = { id: H.uid('ch'), type: 'chart', kind: kind || 'bar', sheetId: b.sheetId, r: b.r, c: b.c, rows: b.rows, cols: b.cols,
+      title: cellText(b.sheetId, b.r - 1, b.c) || cellText(b.sheetId, b.r, b.c) || 'Chart' };
+    dashItems().push(item);
+    openDash(true);
+    setDirty(true);
+    H.toast('success', 'Chart added from ' + cellName(b.r, b.c) + ':' + cellName(b.r + b.rows - 1, b.c + b.cols - 1) + '. Click its title to rename it.');
+  }
+
+  function openDash(open) {
+    state.dash.open = open === undefined ? !state.dash.open : open;
+    renderDash();
+    window.dispatchEvent(new Event('resize'));
+  }
+
+  /** Number from a cell value: numbers as they are, text like "1,23,456.50" parsed, other text (labels) -> NaN. */
+  function num(v) {
+    if (typeof v === 'number') return v;
+    if (v == null) return NaN;
+    var t = String(v).trim();
+    if (!/^[\s\-\u2212(]*[\u20B9$\u20AC]?\s*[\d.,]+\)?\s*%?$/.test(t)) return NaN;
+    var n = +t.replace(/[^0-9.]/g, '');
+    return /^[\s]*[-\u2212(]/.test(t) ? -n : n;
+  }
+
+  function fmtNum(n) {
+    if (!isFinite(n)) return '—';
+    var abs = Math.abs(n);
+    var digits = abs >= 1000 || Math.round(n) === n ? 0 : 2;
+    try { return n.toLocaleString(navigator.language || 'en-IN', { maximumFractionDigits: digits, minimumFractionDigits: digits }); } catch (e) { return n.toFixed(digits); }
+  }
+  function fmtShortNum(n) {
+    var a = Math.abs(n), s = n < 0 ? '-' : '';
+    if (a >= 1e7) return s + (a / 1e7).toFixed(a >= 1e8 ? 0 : 1) + ' Cr';
+    if (a >= 1e5) return s + (a / 1e5).toFixed(a >= 1e6 ? 0 : 1) + ' L';
+    if (a >= 1e3) return s + (a / 1e3).toFixed(0) + 'K';
+    return s + Math.round(a);
+  }
+
+  function readBlock(item) {
+    var sheet = workbook() && workbook().getSheetBySheetId(item.sheetId);
+    if (!sheet) return null;
+    return sheet.getRange(item.r, item.c, item.rows, item.cols).getRawValues();
+  }
+
+  function kpiHtml(item) {
+    var sheet = workbook().getSheetBySheetId(item.sheetId);
+    if (!sheet) return '';
+    var v = num(sheet.getRange(item.r, item.c, 1, 1).getRawValues()[0][0]);
+    var delta = '';
+    if (item.cmp) {
+      var base = num(sheet.getRange(item.cmp.r, item.cmp.c, 1, 1).getRawValues()[0][0]);
+      if (isFinite(v) && isFinite(base) && base !== 0) {
+        var d = v - base, pct = d / Math.abs(base) * 100, good = item.good === 'down' ? d <= 0 : d >= 0;
+        delta = '<div class="ak-kpi__delta ' + (good ? 'is-good' : 'is-bad') + '">' + (d >= 0 ? '▲ ' : '▼ ') +
+          fmtNum(Math.abs(pct)) + '% <span>vs ' + H.escapeHtml(item.cmpTitle || 'compared') + ' (' + fmtShortNum(base) + ')</span></div>';
+      }
+    }
+    return '<div class="ak-dcard ak-kpi" data-dash="' + item.id + '">' + dashHead(item) +
+      '<div class="ak-kpi__value" title="' + H.escapeHtml(sheetName(item.sheetId) + '!' + cellName(item.r, item.c)) + '">' + fmtNum(v) + '</div>' + delta + '</div>';
+  }
+
+  function chartHtml(item) {
+    var block = readBlock(item);
+    if (!block) return '';
+    var hasHeader = item.cols > 1 && block[0].slice(1).some(function (v) { return typeof v === 'string' && isNaN(num(v)); });
+    var hasLabels = item.cols > 1 && block.slice(hasHeader ? 1 : 0).some(function (r) { return typeof r[0] === 'string' && isNaN(num(r[0])); });
+    var rows = block.slice(hasHeader ? 1 : 0);
+    var labels = rows.map(function (r, i) { return hasLabels ? String(r[0] || '') : String(i + 1); });
+    var firstCol = hasLabels ? 1 : 0;
+    var series = [];
+    for (var c = firstCol; c < item.cols && series.length < 6; c++) {
+      series.push({ name: hasHeader ? String(block[0][c] || '') : 'Series ' + (series.length + 1), values: rows.map(function (r) { return num(r[c]); }) });
+    }
+    var W = 340, Hh = 170, L = 46, B = 24, T = 8, R = 8, w = W - L - R, h = Hh - T - B;
+    var all = []; series.forEach(function (s) { s.values.forEach(function (v) { if (isFinite(v)) all.push(v); }); });
+    var max = Math.max.apply(null, all.concat([0])), min = Math.min.apply(null, all.concat([0]));
+    if (max === min) max = min + 1;
+    var y = function (v) { return T + h - (v - min) / (max - min) * h; };
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + Hh + '" class="ak-chart" role="img" aria-label="' + H.escapeHtml(item.title) + '">';
+    [0, 0.5, 1].forEach(function (t) {
+      var val = min + (max - min) * t, yy = y(val);
+      svg += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + yy + '" y2="' + yy + '" stroke="#E1DFDD"/>' +
+        '<text x="' + (L - 6) + '" y="' + (yy + 3) + '" text-anchor="end" font-size="9" fill="#605E5C">' + fmtShortNum(val) + '</text>';
+    });
+    if (min < 0) svg += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(0) + '" y2="' + y(0) + '" stroke="#8A8886"/>';
+    var n = labels.length, band = w / Math.max(n, 1);
+    if (item.kind === 'line') {
+      series.forEach(function (s, si) {
+        var pts = s.values.map(function (v, i) { return isFinite(v) ? (L + band * (i + 0.5)) + ',' + y(v) : null; }).filter(Boolean).join(' ');
+        svg += '<polyline fill="none" stroke="' + DASH_COLORS[si % 6] + '" stroke-width="2" points="' + pts + '"/>';
+        s.values.forEach(function (v, i) { if (isFinite(v)) svg += '<circle cx="' + (L + band * (i + 0.5)) + '" cy="' + y(v) + '" r="2.5" fill="' + DASH_COLORS[si % 6] + '"><title>' + H.escapeHtml(labels[i] + ' · ' + s.name + ': ' + fmtNum(v)) + '</title></circle>'; });
+      });
+    } else {
+      var bw = Math.max(2, (band * 0.72) / Math.max(series.length, 1));
+      series.forEach(function (s, si) {
+        s.values.forEach(function (v, i) {
+          if (!isFinite(v)) return;
+          var x = L + band * i + band * 0.14 + bw * si, y0 = y(Math.max(v, 0)), y1 = y(Math.min(v, 0));
+          svg += '<rect x="' + x + '" y="' + y0 + '" width="' + (bw - 1) + '" height="' + Math.max(1, y1 - y0) + '" fill="' + DASH_COLORS[si % 6] + '" rx="1.5"><title>' +
+            H.escapeHtml(labels[i] + ' · ' + s.name + ': ' + fmtNum(v)) + '</title></rect>';
+        });
+      });
+    }
+    var every = Math.ceil(n / 8);
+    labels.forEach(function (lb, i) {
+      if (i % every) return;
+      svg += '<text x="' + (L + band * (i + 0.5)) + '" y="' + (Hh - 8) + '" text-anchor="middle" font-size="9" fill="#605E5C">' + H.escapeHtml(lb.length > 10 ? lb.slice(0, 9) + '…' : lb) + '</text>';
+    });
+    svg += '</svg>';
+    var legend = series.length > 1 || hasHeader ? '<div class="ak-legend">' + series.map(function (s, si) {
+      return '<span><i style="background:' + DASH_COLORS[si % 6] + '"></i>' + H.escapeHtml(s.name) + '</span>';
+    }).join('') + '</div>' : '';
+    return '<div class="ak-dcard ak-dchart" data-dash="' + item.id + '">' + dashHead(item) + svg + legend + '</div>';
+  }
+
+  function dashHead(item) {
+    var where = sheetName(item.sheetId) + '!' + cellName(item.r, item.c) + (item.rows > 1 || item.cols > 1 ? ':' + cellName(item.r + item.rows - 1, item.c + item.cols - 1) : '');
+    var tools = item.type === 'chart'
+      ? '<button class="ak-icon-btn ak-icon-btn--xs" data-act="dash-kind" data-id="' + item.id + '" title="Switch bar / line">' + H.icon(item.kind === 'line' ? 'table' : 'sliders') + '</button>'
+      : (item.cmp ? '<button class="ak-icon-btn ak-icon-btn--xs" data-act="dash-good" data-id="' + item.id + '" title="Higher is ' + (item.good === 'down' ? 'worse' : 'better') + ' (click to switch)">' + (item.good === 'down' ? '↓' : '↑') + '</button>' : '');
+    return '<div class="ak-dcard__head"><span class="ak-dcard__title" contenteditable="true" spellcheck="false" data-id="' + item.id + '" title="Click to rename">' + H.escapeHtml(item.title) + '</span>' +
+      '<span class="ak-dcard__src" data-act="dash-go" data-id="' + item.id + '" title="Go to the cells">' + H.escapeHtml(where) + '</span>' + tools +
+      '<button class="ak-icon-btn ak-icon-btn--xs" data-act="dash-remove" data-id="' + item.id + '" aria-label="Remove">' + H.icon('x') + '</button></div>';
+  }
+
+  function renderDash() {
+    if (!ui.dash) return;
+    ui.app.classList.toggle('has-dash', !!state.dash.open);
+    ui.dashToggle && ui.dashToggle.classList.toggle('is-active', !!state.dash.open);
+    if (!state.dash.open) { ui.dash.hidden = true; return; }
+    ui.dash.hidden = false;
+    var items = dashItems().filter(function (it) { return workbook() && workbook().getSheetBySheetId(it.sheetId); });
+    var cards = items.map(function (it) { try { return it.type === 'kpi' ? kpiHtml(it) : chartHtml(it); } catch (e) { return ''; } }).join('');
+    ui.dash.innerHTML = '<div class="ak-dash__cards">' + (cards || '<div class="ak-dash__empty"><b>Dashboard</b><br>Select a cell (or a value and the cell to compare with) and click <b>+ KPI</b>; select a block with labels and numbers and click <b>+ Bar</b> or <b>+ Line</b>. Cards update when the cells change.</div>') +
+      '</div><div class="ak-dash__tools">' +
+      '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="dash-kpi">' + H.icon('sigma') + '<span>+ KPI</span></button>' +
+      '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="dash-bar">' + H.icon('sliders') + '<span>+ Bar</span></button>' +
+      '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="dash-line">' + H.icon('link') + '<span>+ Line</span></button></div>';
+  }
+
+  var scheduleDash = H.debounce(function () { if (state.dash.open) guard(renderDash)(); }, 300);
+
+  function onDashClick(act, id) {
+    var item = dashItems().filter(function (x) { return x.id === id; })[0];
+    if (act === 'dash-remove' && item) { state.dash.items = dashItems().filter(function (x) { return x !== item; }); setDirty(true); renderDash(); }
+    if (act === 'dash-kind' && item) { item.kind = item.kind === 'line' ? 'bar' : 'line'; setDirty(true); renderDash(); }
+    if (act === 'dash-good' && item) { item.good = item.good === 'down' ? 'up' : 'down'; setDirty(true); renderDash(); }
+    if (act === 'dash-go' && item) {
+      var wb = workbook(), sheet = wb.getSheetBySheetId(item.sheetId);
+      if (sheet) { wb.setActiveSheet(sheet); try { sheet.getRange(item.r, item.c, item.rows, item.cols).activate(); } catch (e) { /* optional */ } }
+    }
+  }
+
+  // =====================================================================================
   // Combine (Phase 2): join two sheets in the browser
   // =====================================================================================
   /** Reads a sheet as { name, header[], types[], rows[][] } using raw (unformatted) values. */
@@ -3353,7 +3579,8 @@
       }),
       joins: joins,
       recons: recons,
-      slicers: Object.keys(state.slicers).map(function (k) { return state.slicers[k]; })
+      slicers: Object.keys(state.slicers).map(function (k) { return state.slicers[k]; }),
+      dash: state.dash
     };
     var linked = sources.map(function (s) { return s.tableCaption; })
       .filter(function (v, i, a) { return a.indexOf(v) === i; }).join(', ');
@@ -3383,6 +3610,8 @@
     (env.joins || []).forEach(function (j) { state.joins[j.sheetId] = j; });
     state.slicers = {};
     (env.slicers || []).forEach(function (p) { state.slicers[p.id] = p; });
+    state.dash = env.dash && env.dash.items ? env.dash : { open: false, items: [] };
+    setTimeout(guard(renderDash), 700);
     (env.recons || []).forEach(function (r) { state.recons[r.sheetId] = r; });
     renderSources(); renderBarSources();
     setTimeout(function () { state.dirty = true; setDirty(false); }, 450);

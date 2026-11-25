@@ -836,3 +836,30 @@ html, body, #controlAddIn, .ak-host {
 /* Stage 5: drill-down hint in the region bar */
 .ak-rbar__hint { color: var(--ak-faint); font-size: 11.5px; margin-right: 4px; }
 @media (max-width: 1100px) { .ak-rbar__hint { display: none; } }
+
+/* ------------------------------------------------------------------ Stage 7: dashboard strip */
+.ak-dash { flex: none; display: flex; gap: 10px; align-items: stretch; padding: 10px 12px; background: #f7f8fa; border-bottom: 1px solid var(--ak-line);
+  max-height: 260px; overflow: hidden; }
+.ak-dash[hidden] { display: none; }
+.ak-dash__cards { flex: 1; display: flex; gap: 10px; overflow-x: auto; min-width: 0; padding-bottom: 2px; align-items: flex-start; }
+.ak-dash__tools { display: flex; flex-direction: column; gap: 4px; flex: none; }
+.ak-dash__empty { font-size: 12.5px; color: var(--ak-muted); line-height: 1.5; padding: 6px 4px; max-width: 520px; }
+.ak-dash__empty b { color: var(--ak-text); }
+.ak-dcard { flex: none; background: #fff; border: 1px solid var(--ak-line); border-radius: 8px; padding: 8px 10px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+.ak-dcard__head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.ak-dcard__title { font-size: 12.5px; font-weight: 600; color: var(--ak-text-2); outline: none; border-radius: 3px; padding: 0 2px; min-width: 20px; }
+.ak-dcard__title:focus { background: var(--ak-accent-soft); }
+.ak-dcard__src { font-size: 10.5px; color: var(--ak-faint); cursor: pointer; margin-left: auto; white-space: nowrap; }
+.ak-dcard__src:hover { color: var(--ak-accent); text-decoration: underline; }
+.ak-icon-btn--xs { width: 20px; height: 20px; font-size: 12px; }
+.ak-icon-btn--xs .ak-ico { width: 13px; height: 13px; }
+.ak-kpi { width: 220px; display: flex; flex-direction: column; }
+.ak-kpi__value { font-size: 28px; font-weight: 600; color: var(--ak-text); letter-spacing: -.5px; margin: 6px 0 4px; font-variant-numeric: tabular-nums; }
+.ak-kpi__delta { font-size: 12px; font-weight: 600; }
+.ak-kpi__delta span { font-weight: 400; color: var(--ak-muted); }
+.ak-kpi__delta.is-good { color: #0e700e; }
+.ak-kpi__delta.is-bad { color: #a4262c; }
+.ak-dchart { width: 360px; }
+.ak-chart { width: 100%; height: auto; display: block; }
+.ak-legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--ak-muted); margin-top: 2px; }
+.ak-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }

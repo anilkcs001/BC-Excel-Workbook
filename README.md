@@ -13,6 +13,7 @@ It puts a full spreadsheet inside Business Central, on a page that is **only the
 - **combine** two sheets on matching keys (Phase 2);
 - **reconcile** books against a bank statement, GSTR-2B or a party ledger (Phase 3), with an exceptions-first result sheet and a live summary sheet;
 - **work on journal and document lines** (Stage 2): *Edit in Excel Workbook* on the General Journal, Item Journal, Sales Order and Purchase Order pages opens the lines as a region; type or paste many lines and BC fills the template, batch or document, the next Line No. and the journal defaults, like a new line on the page. The same four appear as *Quick start* tiles in the region panel;
+- **show KPI cards and charts** (Stage 7) in a Dashboard strip above the sheet, drawn from cells and updated when they change;
 - **use BC numbers inside formulas** (Stage 6): `=BCGLSUM("40000..49999", B2)`, `=BCBUDGET(...)`, `=BCSUM(...)`, `=BCCOUNT(...)`, `=BCVALUE(...)` calculate live from BC and follow a period picker;
 - **open BC from any cell** (Stage 5): Ctrl+click a region row to open its record, or a budget / last-year amount to open the G/L budget entries or G/L entries behind it;
 - **pick a period once for the whole sheet** (Stage 4): a *period picker* cell (This Month, Year to Date, Last Fiscal Year...) drives every region whose date filter points to it;
@@ -21,7 +22,7 @@ It puts a full spreadsheet inside Business Central, on a page that is **only the
 
 Every command (AutoSave, Save to BC, Save, Refresh, Import, Export, Combine, Reconcile, Insert region) sits in the add-in's own toolbar, with region commands also on the right-click menu and on a region bar that appears when a cell inside a region is selected. The page has no BC fields or action bar. The look follows Excel: Excel green accent, Calibri 11, and regions styled like an Excel table (blue header, thin border, banded rows).
 
-Delivered: Phase 1 (sheet, data explorer, save, refresh, Excel I/O), Phase 2 (Combine), Phase 3 (Reconcile), Stage 1 of the advanced features (editable regions with write-back) Stage 1b (regions anywhere on a sheet, cell-driven filters, Editing switch, Excel look), Stage 2 (journal and document lines), Stage 3 (budget grid), Stage 4 (period picker), Stage 5 (drill-down) and Stage 6 (BC functions in formulas). Next stages: journal and document lines, budget grid, cell-driven filters (slicers), drill-down, BC formulas in cells, KPI cards and charts.
+Delivered: Phase 1 (sheet, data explorer, save, refresh, Excel I/O), Phase 2 (Combine), Phase 3 (Reconcile), Stage 1 of the advanced features (editable regions with write-back) Stage 1b (regions anywhere on a sheet, cell-driven filters, Editing switch, Excel look), Stage 2 (journal and document lines), Stage 3 (budget grid), Stage 4 (period picker), Stage 5 (drill-down), Stage 6 (BC functions in formulas) and Stage 7 (KPI cards and charts). All planned stages are done. Next stages: journal and document lines, budget grid, cell-driven filters (slicers), drill-down, BC formulas in cells, KPI cards and charts.
 
 ## 2. Object list
 
@@ -118,6 +119,11 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 - **Combine and Reconcile** read the first region of a sheet (its block only, without the BC Status column).
 - **Screenshots** (mock data): [panel with a cell filter](docs/images/stage1b-r1-panel.jpg) · [region at A4 with title, filter cell and totals](docs/images/stage1b-r3-two-regions.jpg) · [right-click menu](docs/images/stage1b-r4-context.jpg) · [Editing switched off](docs/images/stage1b-r5-editing-off.jpg).
 
+**KPI cards and charts (Stage 7, main.js "dashboard strip" section).**
+- **Dashboard** in the toolbar opens a strip above the sheet. *+ KPI* makes a card from the selected cell; select two cells (value and the one to compare with, side by side or one under the other) to show the change in % with a green/red arrow (the ↑/↓ button sets whether higher is better). *+ Bar* / *+ Line* make a chart from the selected block: first column = labels, first row = series names, the rest = numbers. The same is on the right-click menu (*Add KPI card from selection*, *Add chart from selection*).
+- Cards and charts read the cells directly (also formula results, so BC functions and regions feed them) and redraw after every change. Titles are editable in place; the cell address on each card jumps to its cells. Charts are drawn as SVG (up to 6 series, Excel colours, Indian short numbers: K, L, Cr). The dashboard is saved with the workbook. It is not part of the .xlsx export.
+- **Screenshot** (mock data): [KPI cards and a bar chart over the P&L snapshot](docs/images/stage7-k1-dashboard.jpg).
+
 **BC functions in formulas (Stage 6, codeunit 89008 "AK Workbook Formulas").**
 
 | Function | Returns | Example |
@@ -193,6 +199,7 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 
 | Version | Date | Change |
 |---|---|---|
+| 2.0.0.0 | 2026-11-26 | Stage 7 **KPI cards and charts**: Dashboard strip above the sheet; KPI cards from a cell with % change against a second cell (higher/lower is better); bar and line charts from a block of cells; live redraw on every change including formula results; editable titles; saved with the workbook. All planned stages (1–7) complete. |
 | 1.9.0.0 | 2026-11-26 | Stage 6 **BC functions in formulas**: BCGLSUM, BCBUDGET, BCSUM, BCCOUNT, BCVALUE as async spreadsheet functions, batched to AL, cached until Refresh, period names and pickers understood; errors as `#BC!` text. New codeunit 89008. |
 | 1.8.0.0 | 2026-11-26 | Stage 5 **drill-down**: Ctrl+click, right-click *Open in Business Central* or region bar *Open* opens the record of a region row (Page Management) or, in a budget grid, the G/L Budget Entries / G/L Entries behind an amount (totaling accounts included). New codeunit 89007. |
 | 1.7.2.0 | 2026-11-26 | *Update region* always reloads the region where it is (never on a new sheet). After changing a region, clicking an empty cell switches the panel back to *At <cell>* (not *New sheet*). |
