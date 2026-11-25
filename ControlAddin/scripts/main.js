@@ -489,6 +489,7 @@
       state.disposables.push(state.api.addEvent(state.api.Event.ActiveSheetChanged, function () { setTimeout(guard(updateRegionBar), 50); }));
     } catch (e) { /* events optional */ }
     registerMenus();
+    registerBCFunctions();
 
     var kick = H.debounce(function () { window.dispatchEvent(new Event('resize')); }, 60);
     if (window.ResizeObserver) {
@@ -1069,7 +1070,8 @@
   function refreshAll() {
     var sources = sourceList(), derived = derivedList();
     if (!sources.length && !derived.length) {
-      H.toast('info', 'No linked sheets yet. Use Get data to load a table.');
+      if (refreshBCFunctions()) { H.toast('success', 'BC functions recalculated.'); return Promise.resolve(); }
+      H.toast('info', 'Nothing to refresh yet. Use Insert region to load a table, or BC functions such as =BCGLSUM("40000..49999", "This Year").');
       return Promise.resolve();
     }
     if (state.busy) return Promise.resolve();
@@ -1087,6 +1089,7 @@
       chain = chain.then(function () { rows += runDerived(d); done++; });
     });
     return chain.then(function () {
+      refreshBCFunctions();
       H.toast('success', 'Refreshed ' + done + (done === 1 ? ' sheet' : ' sheets') + ' (' + H.formatInt(rows) + ' rows).');
     }, function (e) { if (e && !e.shown) reportError(e); });
   }
@@ -2536,6 +2539,102 @@
   }
 
   // =====================================================================================
+  // Stage 6: BC functions in formulas (BCGLSUM, BCBUDGET, BCSUM, BCCOUNT, BCVALUE)
+  //
+  // Each function is an async Univer function. Calls made while the sheet calculates are collected for a
+  // moment and sent to AL in one batch (purpose 'formulas'); the answers are cached per call until Refresh.
+  // A period name (This Month, Last Year...) or a period picker value as the period argument becomes
+  // yyyy-mm-dd..yyyy-mm-dd; anything else is passed as a BC filter.
+  // =====================================================================================
+  var BC_FUNCTIONS = [
+    ['BCGLSUM', 'Net change of G/L accounts. BCGLSUM(account or filter, [period], [dimension 1 filter], [dimension 2 filter])'],
+    ['BCBUDGET', 'Budgeted amount. BCBUDGET(budget name, account or filter, [period], [dimension 1 filter], [dimension 2 filter])'],
+    ['BCSUM', 'Sum of a number field. BCSUM(table, field, [filter field, filter]...)'],
+    ['BCCOUNT', 'Number of records. BCCOUNT(table, [filter field, filter]...)'],
+    ['BCVALUE', 'A field of the first matching record. BCVALUE(table, field, [filter field, filter]...)']
+  ];
+  var bcf = { cache: {}, queue: {}, timer: null, pending: {} };
+
+  function registerBCFunctions() {
+    var f;
+    try { f = state.api.getFormula(); } catch (e) { return; }
+    if (!f || !f.registerAsyncFunction) return;
+    BC_FUNCTIONS.forEach(function (d) {
+      try {
+        f.registerAsyncFunction(d[0], function () { return bcCall(d[0], Array.prototype.slice.call(arguments)); }, d[1]);
+      } catch (e) { /* function registration optional */ }
+    });
+  }
+
+  /** Univer passes a cell or range as a 2D array; use its first value. Period names become ISO date ranges. */
+  function bcArg(fn, index, v) {
+    while (Array.isArray(v)) v = v.length ? v[0] : '';
+    if (v == null) return '';
+    var periodArg = (fn === 'BCGLSUM' && index === 1) || (fn === 'BCBUDGET' && index === 2);
+    var text = typeof v === 'number' ? String(Math.round(v * 1e9) / 1e9) : String(v).trim();
+    if (periodArg || /^(bcsum|bccount|bcvalue)$/i.test(fn)) {
+      var r = periodRange(text);
+      if (r) return isoDate(r.from) + '..' + isoDate(r.to);
+    }
+    return text;
+  }
+
+  function bcCall(fn, rawArgs) {
+    var args = rawArgs.map(function (v, i) { return bcArg(fn, i, v); });
+    while (args.length && args[args.length - 1] === '') args.pop();
+    var key = fn + '\u0001' + args.join('\u0001');
+    if (Object.prototype.hasOwnProperty.call(bcf.cache, key)) return Promise.resolve(bcf.cache[key]);
+    if (bcf.queue[key]) return bcf.queue[key].promise;
+    var entry = { fn: fn, args: args };
+    entry.promise = new Promise(function (resolve) { entry.resolve = resolve; });
+    bcf.queue[key] = entry;
+    clearTimeout(bcf.timer);
+    bcf.timer = setTimeout(flushBCCalls, 60);
+    return entry.promise;
+  }
+
+  function flushBCCalls() {
+    var keys = Object.keys(bcf.queue).slice(0, 2000);
+    if (!keys.length) return;
+    var requestId = 'f' + (++state.requestSeq), batch = {};
+    keys.forEach(function (k) { batch[k] = bcf.queue[k]; delete bcf.queue[k]; });
+    bcf.pending[requestId] = batch;
+    var calls = keys.map(function (k) { return { id: k, fn: batch[k].fn, args: batch[k].args }; });
+    H.sendChunked('formulas', JSON.stringify({ requestId: requestId, calls: calls }), state.config.chunkSize).catch(function (e) {
+      delete bcf.pending[requestId];
+      keys.forEach(function (k) { batch[k].resolve('#BC! ' + (e.message || e)); });
+    });
+    if (Object.keys(bcf.queue).length) bcf.timer = setTimeout(flushBCCalls, 60);
+  }
+
+  function onFormulaResult(text) {
+    var res = JSON.parse(text), batch = bcf.pending[res.requestId];
+    if (!batch) return;
+    delete bcf.pending[res.requestId];
+    if (res.error) {
+      Object.keys(batch).forEach(function (k) { batch[k].resolve('#BC! ' + res.error); });
+      return;
+    }
+    (res.results || []).forEach(function (r) {
+      var entry = batch[r.id];
+      if (!entry) return;
+      var value = r.error ? '#BC! ' + r.error : r.value;
+      bcf.cache[r.id] = value;
+      entry.resolve(value);
+      delete batch[r.id];
+    });
+    Object.keys(batch).forEach(function (k) { batch[k].resolve('#BC! No answer'); });
+  }
+
+  /** Refresh: forget cached BC values and let the sheet calculate again, so every BC function asks AL anew. */
+  function refreshBCFunctions() {
+    var had = Object.keys(bcf.cache).length;
+    bcf.cache = {};
+    try { state.api.getFormula().executeCalculation(); } catch (e) { /* optional */ }
+    return had;
+  }
+
+  // =====================================================================================
   // Combine (Phase 2): join two sheets in the browser
   // =====================================================================================
   /** Reads a sheet as { name, header[], types[], rows[][] } using raw (unformatted) values. */
@@ -3552,6 +3651,7 @@
     else if (purpose === 'writeresult') onWriteResult(full);
     else if (purpose === 'budgetdata') onBudgetData(full);
     else if (purpose === 'budgetresult') onBudgetResult(full);
+    else if (purpose === 'formularesult') onFormulaResult(full);
   });
 
   window.RequestSave = guard(function () { requestSave(); });

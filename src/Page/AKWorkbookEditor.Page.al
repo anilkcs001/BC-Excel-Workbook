@@ -184,6 +184,8 @@ page 89001 "AK Workbook Editor"
                 WriteBudget(Payload);
             'drill':
                 DrillDown(Payload);
+            'formulas':
+                EvaluateFormulas(Payload);
             'export':
                 begin
                     Workbook.Get(WorkbookCode);
@@ -232,6 +234,26 @@ page 89001 "AK Workbook Editor"
         ClearLastError();
         if not TryDrillDown(Payload) then
             CurrPage.Workbook.ShowToast('error', GetLastErrorText());
+    end;
+
+    /// <summary>Stage 6: calculates a batch of BCGLSUM / BCBUDGET / BCSUM / BCCOUNT / BCVALUE calls.</summary>
+    local procedure EvaluateFormulas(Payload: Text)
+    var
+        Result: Text;
+    begin
+        ClearLastError();
+        if TryEvaluateFormulas(Payload, Result) then
+            SendPayload('formularesult', Result)
+        else
+            SendPayload('formularesult', BudgetService.BuildErrorResponse(Payload, GetLastErrorText()));
+    end;
+
+    [TryFunction]
+    local procedure TryEvaluateFormulas(Payload: Text; var Result: Text)
+    var
+        WorkbookFormulas: Codeunit "AK Workbook Formulas";
+    begin
+        Result := WorkbookFormulas.EvaluateCalls(Payload);
     end;
 
     [TryFunction]

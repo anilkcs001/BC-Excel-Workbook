@@ -13,6 +13,7 @@ It puts a full spreadsheet inside Business Central, on a page that is **only the
 - **combine** two sheets on matching keys (Phase 2);
 - **reconcile** books against a bank statement, GSTR-2B or a party ledger (Phase 3), with an exceptions-first result sheet and a live summary sheet;
 - **work on journal and document lines** (Stage 2): *Edit in Excel Workbook* on the General Journal, Item Journal, Sales Order and Purchase Order pages opens the lines as a region; type or paste many lines and BC fills the template, batch or document, the next Line No. and the journal defaults, like a new line on the page. The same four appear as *Quick start* tiles in the region panel;
+- **use BC numbers inside formulas** (Stage 6): `=BCGLSUM("40000..49999", B2)`, `=BCBUDGET(...)`, `=BCSUM(...)`, `=BCCOUNT(...)`, `=BCVALUE(...)` calculate live from BC and follow a period picker;
 - **open BC from any cell** (Stage 5): Ctrl+click a region row to open its record, or a budget / last-year amount to open the G/L budget entries or G/L entries behind it;
 - **pick a period once for the whole sheet** (Stage 4): a *period picker* cell (This Month, Year to Date, Last Fiscal Year...) drives every region whose date filter points to it;
 - **plan budgets in a grid** (Stage 3): G/L accounts down, months or quarters across, last year's actuals alongside; type amounts (or a yearly total to spread it) and **Save to BC** adds G/L Budget Entries for the differences;
@@ -20,7 +21,7 @@ It puts a full spreadsheet inside Business Central, on a page that is **only the
 
 Every command (AutoSave, Save to BC, Save, Refresh, Import, Export, Combine, Reconcile, Insert region) sits in the add-in's own toolbar, with region commands also on the right-click menu and on a region bar that appears when a cell inside a region is selected. The page has no BC fields or action bar. The look follows Excel: Excel green accent, Calibri 11, and regions styled like an Excel table (blue header, thin border, banded rows).
 
-Delivered: Phase 1 (sheet, data explorer, save, refresh, Excel I/O), Phase 2 (Combine), Phase 3 (Reconcile), Stage 1 of the advanced features (editable regions with write-back) Stage 1b (regions anywhere on a sheet, cell-driven filters, Editing switch, Excel look), Stage 2 (journal and document lines), Stage 3 (budget grid), Stage 4 (period picker) and Stage 5 (drill-down). Next stages: journal and document lines, budget grid, cell-driven filters (slicers), drill-down, BC formulas in cells, KPI cards and charts.
+Delivered: Phase 1 (sheet, data explorer, save, refresh, Excel I/O), Phase 2 (Combine), Phase 3 (Reconcile), Stage 1 of the advanced features (editable regions with write-back) Stage 1b (regions anywhere on a sheet, cell-driven filters, Editing switch, Excel look), Stage 2 (journal and document lines), Stage 3 (budget grid), Stage 4 (period picker), Stage 5 (drill-down) and Stage 6 (BC functions in formulas). Next stages: journal and document lines, budget grid, cell-driven filters (slicers), drill-down, BC formulas in cells, KPI cards and charts.
 
 ## 2. Object list
 
@@ -39,6 +40,7 @@ Delivered: Phase 1 (sheet, data explorer, save, refresh, Excel I/O), Phase 2 (Co
 | 89005 | Codeunit | AK Workbook Budget (budget grid load, budget setup for the panel) |
 | 89006 | Codeunit | AK Workbook Budget Write (one budget cell per run) |
 | 89007 | Codeunit | AK Workbook Drill Down (opens the BC page behind a cell) |
+| 89008 | Codeunit | AK Workbook Formulas (BCGLSUM, BCBUDGET, BCSUM, BCCOUNT, BCVALUE) |
 | 89000 | PageExtension | AK General Journal (action *Edit in Excel Workbook*) |
 | 89001 | PageExtension | AK Item Journal (action *Edit in Excel Workbook*) |
 | 89002 | PageExtension | AK Sales Order (action *Edit in Excel Workbook*) |
@@ -116,6 +118,20 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 - **Combine and Reconcile** read the first region of a sheet (its block only, without the BC Status column).
 - **Screenshots** (mock data): [panel with a cell filter](docs/images/stage1b-r1-panel.jpg) · [region at A4 with title, filter cell and totals](docs/images/stage1b-r3-two-regions.jpg) · [right-click menu](docs/images/stage1b-r4-context.jpg) · [Editing switched off](docs/images/stage1b-r5-editing-off.jpg).
 
+**BC functions in formulas (Stage 6, codeunit 89008 "AK Workbook Formulas").**
+
+| Function | Returns | Example |
+|---|---|---|
+| `BCGLSUM(account, [period], [dim 1], [dim 2])` | Net change: sum of G/L Entry amounts | `=-BCGLSUM("40000..49999", B2)` (revenue for the period in B2) |
+| `BCBUDGET(budget, account, [period], [dim 1], [dim 2])` | Sum of G/L Budget Entries | `=BCBUDGET("FY2627", "61100", "This Fiscal Year", "ADMIN")` |
+| `BCSUM(table, field, [field, filter]...)` | Sum of a normal number field | `=BCSUM("Cust. Ledger Entry", "Amount (LCY)", "Customer No.", A5, "Open", "Yes")` |
+| `BCCOUNT(table, [field, filter]...)` | Number of records | `=BCCOUNT("Sales Header", "Document Type", "Order", "Status", "Open")` |
+| `BCVALUE(table, field, [field, filter]...)` | Field of the first record (lookup) | `=BCVALUE("Customer", "Name", "No.", A5)` |
+
+- **Arguments.** Account: one account, a filter (`40000..49999`) or a totaling account (its *Totaling* is used). Period: a period name (*This Month*, *Last Fiscal Year*...), a period picker cell, or a BC date filter. Tables and fields: number, name or caption. Filters use BC syntax; cells can be used for any argument.
+- **How it calculates.** Each function is an async spreadsheet function. Calls made during one calculation are sent to AL in one batch (purpose `formulas`), evaluated one by one as the current user (permissions apply) and cached in the browser. **Refresh** clears the cache and calculates again; changing a referenced cell (for example the period picker) recalculates at once. An error shows in the cell as `#BC! <reason>`.
+- **Screenshot** (mock data): [P&L snapshot with BCGLSUM, BCBUDGET, BCCOUNT and BCVALUE](docs/images/stage6-f1-formulas.jpg).
+
 **Drill-down (Stage 5, codeunit 89007 "AK Workbook Drill Down").**
 - **How.** Ctrl+click (Cmd+click on Mac) a cell inside a region, or right-click > *Open in Business Central (Ctrl+click)*, or *Open* on the region bar.
 - **Region rows** open the record on its own page: the add-in sends the row's key values; AL filters the table on them (Code/Text values quoted, ISO dates localized) and calls `Page Management.PageRun`, which picks the table's card or list page. The region must contain all key fields (the panel's *Key* button selects them).
@@ -177,6 +193,7 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 
 | Version | Date | Change |
 |---|---|---|
+| 1.9.0.0 | 2026-11-26 | Stage 6 **BC functions in formulas**: BCGLSUM, BCBUDGET, BCSUM, BCCOUNT, BCVALUE as async spreadsheet functions, batched to AL, cached until Refresh, period names and pickers understood; errors as `#BC!` text. New codeunit 89008. |
 | 1.8.0.0 | 2026-11-26 | Stage 5 **drill-down**: Ctrl+click, right-click *Open in Business Central* or region bar *Open* opens the record of a region row (Page Management) or, in a budget grid, the G/L Budget Entries / G/L Entries behind an amount (totaling accounts included). New codeunit 89007. |
 | 1.7.2.0 | 2026-11-26 | *Update region* always reloads the region where it is (never on a new sheet). After changing a region, clicking an empty cell switches the panel back to *At <cell>* (not *New sheet*). |
 | 1.7.1.0 | 2026-11-26 | Fix: with the region or budget panel open, clicking another cell now moves the target to that cell (*New region at A4*); before, the panel kept the first cell or updated the last inserted region. A region or grid can no longer be inserted on a period picker cell. The region bar now follows mouse clicks reliably (selection is read from the `set-selections` operation). |
