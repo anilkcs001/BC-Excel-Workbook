@@ -327,7 +327,7 @@
         case 'region-refresh': if (activeRegion()) refreshOne(activeRegion().id); break;
         case 'region-open': drillAt(selectedCell()); break;
         case 'region-select': if (activeRegion()) selectRegion(activeRegion(), 'toggle'); break;
-        case 'region-remove': if (activeRegion()) unlinkSource(activeRegion().id); break;
+        case 'region-remove': if (activeRegion()) askRemoveRegion(activeRegion()); break;
         case 'view-combine': togglePanel('combine'); break;
         case 'view-recon': togglePanel('recon'); break;
         case 'r-add-key': state.recon.keys.push({ left: state.recon.left[0] || '', right: state.recon.right[0] || '' }); renderReconKeys(); break;
@@ -1125,6 +1125,43 @@
     H.toast('info', 'Sheet unlinked. Its data stays but will not refresh.');
   }
 
+  /** Remove a region: clear its cells (data, format, filter, dropdowns) or keep the data and only unlink it. */
+  function askRemoveRegion(s) {
+    var g = regionRange(s, 'all'), where = sheetName(s.sheetId) + '!' + cellName(g.r, g.c) + ':' + cellName(g.r + g.rows - 1, g.c + g.cols - 1);
+    var pending = s.changeCount ? ' It has ' + s.changeCount + ' change(s) not saved to Business Central; they will be lost.' : '';
+    H.choose('Remove the ' + s.tableCaption + ' region at ' + where + '?' + pending +
+      ' "Remove region" clears these cells. "Keep data" leaves the values on the sheet as plain cells that no longer refresh. Nothing is deleted in Business Central.',
+      [{ label: 'Keep data, unlink', value: 'unlink' }, { label: 'Remove region', value: 'remove', primary: true }], 'Remove region')
+      .then(guard(function (v) {
+        if (v === 'unlink') unlinkSource(s.id);
+        if (v === 'remove') removeRegion(s);
+      }));
+  }
+
+  function removeRegion(s) {
+    var sheet = workbook().getSheetBySheetId(s.sheetId);
+    var g = regionRange(s, 'all');
+    if (sheet) {
+      withoutDirty(function () {
+        state.applying++;
+        try {
+          // The editable line under the rows and Univer's border edges one row/column outside belong to the region too.
+          var area = sheet.getRange(g.r, g.c, g.rows + (s.editable ? 2 : 1), g.cols + 1);
+          try { var f = sheet.getFilter && sheet.getFilter(); var fr = f && f.getRange && f.getRange();
+            if (f && (!fr || (fr.getRow() === g.r && fr.getColumn() === g.c))) f.remove(); } catch (e) { /* no filter */ }
+          try { area.setDataValidation(null); } catch (e) { /* no dropdowns */ }
+          area.clear();
+        } finally { state.applying--; }
+      });
+    }
+    if (s.bandRuleId && sheet) { try { sheet.deleteConditionalFormattingRule(s.bandRuleId); } catch (e) { /* optional */ } }
+    delete state.sources[s.id];
+    delete state.joins[s.id];
+    delete state.recons[s.id];
+    updateWriteButton(); updateRegionBar(); renderSources(); renderBarSources(); setDirty(true);
+    H.toast('success', s.tableCaption + ' region removed from ' + sheetName(s.sheetId) + '. Use Undo (Ctrl+Z) to bring the cells back as plain data.');
+  }
+
   function activateSheet(id) {
     var region = state.sources[id];
     var wb = workbook(), sheet = wb && wb.getSheetBySheetId(region ? region.sheetId : id);
@@ -1791,7 +1828,7 @@
       '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="region-open" title="Open the selected row or amount in Business Central">' + H.icon('link') + '<span>Open</span></button>' +
       '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="region-props">' + H.icon('sliders') + '<span>Properties</span></button>' +
       '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="region-refresh">' + H.icon('refresh') + '<span>Refresh</span></button>' +
-      '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="region-remove" title="Stop linking this range to BC (the data stays)">' + H.icon('unlink') + '<span>Unlink</span></button>';
+      '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="region-remove" title="Remove the region from the sheet, or keep the data and only stop linking it to BC">' + H.icon('x') + '<span>Remove</span></button>';
     ui.regionbar.hidden = false;
     ui.app.classList.add('has-regionbar');
   }
@@ -1873,6 +1910,7 @@
     add('ak.region.props', 'Region properties', function () { var s = regionAtSelection(); if (s) { if (isBudget(s)) openBudgetPanel(s); else openRegionPanel(s); } else H.toast('info', 'Select a cell inside a region first.'); }, 2);
     add('ak.region.select', 'Select region', function () { var s = regionAtSelection(); if (s) selectRegion(s, 'all'); else H.toast('info', 'Select a cell inside a region first.'); }, 2);
     add('ak.region.selectdata', 'Select region data rows', function () { var s = regionAtSelection(); if (s) selectRegion(s, 'data'); else H.toast('info', 'Select a cell inside a region first.'); }, 2);
+    add('ak.region.remove', 'Remove region', function () { var s = regionAtSelection(); if (s) askRemoveRegion(s); else H.toast('info', 'Select a cell inside a region first.'); }, 3);
     add('ak.region.refresh', 'Refresh region', function () { var s = regionAtSelection(); if (s) refreshOne(s.id); else H.toast('info', 'Select a cell inside a region first.'); }, 3);
   }
 
