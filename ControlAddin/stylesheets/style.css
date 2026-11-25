@@ -106,6 +106,7 @@ html, body, #controlAddIn, .ak-host {
 
 .ak-bar__sources {
   display: flex;
+  text-overflow: ellipsis;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -775,3 +776,15 @@ html, body, #controlAddIn, .ak-host {
   .ak-bar__logo { display: none; }
 }
 .ak-tip { padding: 8px 10px; border-radius: var(--ak-radius); background: #fff8e6; color: #6b4e00; }
+
+/* ------------------------------------------------------------------ Stage 1: editable sheets */
+.ak-btn--write { background: #107c10; border-color: #107c10; color: #fff; }
+.ak-btn--write:hover { background: #0b6a0b; border-color: #0b6a0b; }
+.ak-btn--write:disabled { background: transparent; border-color: var(--ak-stroke, #d1d1d1); color: var(--ak-text-3, #8a8886); }
+.ak-count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; margin-left: 2px;
+  border-radius: 9px; background: #fff; color: #107c10; font-size: 11px; font-weight: 700; line-height: 1; }
+.ak-badge--edit { background: #dff6dd; color: #0e700e; }
+.ak-edit-opt { margin-top: 12px; padding: 10px 12px; border: 1px solid #c7e0c7; border-radius: 8px; background: #f3fbf3; line-height: 1.4; }
+.ak-edit-opt b { color: #0e700e; }
+
+.ak-bar__sources > span { overflow: hidden; text-overflow: ellipsis; }

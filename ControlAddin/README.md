@@ -31,14 +31,14 @@ ControlAddin/
 | `OnFieldsRequested(TableNo)` | Table picked. AL answers with `SetFields`. |
 | `OnDataRequested(RequestJson)` | Load or refresh. AL answers with `AppendData` (paged) or `DataError`. |
 | `OnWorkbookSaving(LinkedTables)` | Sent just before a save payload. |
-| `OnPayloadChunk(Purpose, Index, Count, Data)` | Chunked `save` / `autosave` (workbook JSON; autosave is stored without a toast) or `export` (xlsx Base64). |
+| `OnPayloadChunk(Purpose, Index, Count, Data)` | Chunked `save` / `autosave` (workbook JSON; autosave is stored without a toast), `export` (xlsx Base64) or `write` (changed rows of an editable sheet for **Save to BC**). |
 | `OnDescriptionChanged(NewDescription)` | Workbook renamed in the header. AL stores it as Description. |
 | `OnDirtyChanged(IsDirty)` | Unsaved-changes state changed. |
 | `OnError(Message)` | Error boundary caught something (logged as telemetry `AK0001`). |
 
 ## Procedures (AL → JS)
 
-`Init(ConfigJson)`, `Refresh()`, `TogglePanel()`, `SetTables(Json)`, `SetFields(Json)`, `AppendData(ChunkJson)`, `DataError(RequestId, Message)`, `ReceiveChunk(Purpose, Index, Count, Data)` for `load` (or `import`, optional: the toolbar imports .xlsx directly in the browser), `RequestSave()`, `RequestExport()`, `ShowToast(Level, Message)`.
+`Init(ConfigJson)`, `Refresh()`, `TogglePanel()`, `SetTables(Json)`, `SetFields(Json)`, `AppendData(ChunkJson)`, `DataError(RequestId, Message)`, `ReceiveChunk(Purpose, Index, Count, Data)` for `load`, `writeresult` (per-row results of Save to BC) or `import` (optional: the toolbar imports .xlsx directly in the browser), `RequestSave()`, `RequestExport()`, `ShowToast(Level, Message)`.
 
 ## How to deploy
 

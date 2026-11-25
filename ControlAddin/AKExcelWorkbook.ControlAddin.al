@@ -35,13 +35,13 @@ controladdin "AK Excel Workbook"
     /// <summary>User picked a table; AL should answer with SetFields().</summary>
     event OnFieldsRequested(TableNo: Integer);
 
-    /// <summary>User clicked Load or Refresh. JSON: requestId, tableNo, fields[], filters[{fieldNo, filter}], maxRows.</summary>
+    /// <summary>User clicked Load or Refresh. JSON: requestId, tableNo, fields[], filters[{fieldNo, filter}], maxRows, editable.</summary>
     event OnDataRequested(RequestJson: Text);
 
     /// <summary>Sent right before a 'save' payload, with a short summary of linked tables.</summary>
     event OnWorkbookSaving(LinkedTables: Text);
 
-    /// <summary>Chunked transfer of large payloads. Purpose: 'save' or 'autosave' (workbook JSON; autosave is stored without a toast) or 'export' (xlsx as Base64).</summary>
+    /// <summary>Chunked transfer of large payloads. Purpose: 'save' or 'autosave' (workbook JSON; autosave is stored without a toast), 'export' (xlsx as Base64) or 'write' (changed sheet rows to write back to BC).</summary>
     event OnPayloadChunk(Purpose: Text; ChunkIndex: Integer; ChunkCount: Integer; Data: Text);
 
     /// <summary>User renamed the workbook in the add-in header. AL stores it as Description.</summary>
@@ -76,7 +76,7 @@ controladdin "AK Excel Workbook"
     /// <summary>A data request failed (bad filter, no permission...).</summary>
     procedure DataError(RequestId: Text; Message: Text);
 
-    /// <summary>Chunked transfer AL -> JS. Purpose: 'load' (saved workbook JSON) or 'import' (xlsx as Base64, optional - the toolbar imports directly in the browser).</summary>
+    /// <summary>Chunked transfer AL -> JS. Purpose: 'load' (saved workbook JSON), 'import' (xlsx as Base64, optional - the toolbar imports directly in the browser) or 'writeresult' (per-row results of a write-back).</summary>
     procedure ReceiveChunk(Purpose: Text; ChunkIndex: Integer; ChunkCount: Integer; Data: Text);
 
     /// <summary>Asks JS to serialize the workbook and send it back with OnWorkbookSaving + OnPayloadChunk('save').</summary>

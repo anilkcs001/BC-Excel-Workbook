@@ -11,6 +11,8 @@
  *          new sheet that is re-calculated on every Refresh.
  * Reconcile: matches books against a statement / GSTR-2B / party ledger with recon.js, writes an
  *          exceptions-first sheet plus a live summary sheet (COUNTIF/SUMIF formulas).
+ * Edit:    a sheet loaded with "Allow editing" tracks changes against the loaded rows; Save to BC sends
+ *          them to AL (purpose 'write'), which validates each field and answers per row ('writeresult').
  */
 (function () {
   'use strict';
@@ -33,6 +35,8 @@
     autosaveTimer: null,
     importMode: 'replace',
     pending: {},            // requestId -> { source, columns, rows, resolve, reject }
+    writes: {},             // write requestId -> { source, changes, resolve }
+    applying: 0,            // > 0 while the add-in itself changes cells (not a user edit)
     requestSeq: 0,
     tables: [],
     table: null,            // { tableNo, tableCaption, canRead, fields[] }
@@ -69,6 +73,7 @@
       '    </div>' +
       '    <div class="ak-bar__sources" id="ak-bar-sources" aria-live="polite"></div>' +
       '    <div class="ak-bar__actions" role="toolbar" aria-label="Workbook">' +
+      '      <button class="ak-btn ak-btn--write" data-act="write" id="ak-write" hidden disabled title="Write the changed and new rows of editable sheets to Business Central">' + H.icon('upload') + '<span>Save to BC</span><span class="ak-count" id="ak-write-count" hidden></span></button>' +
       '      <button class="ak-btn ak-btn--subtle" data-act="save" title="Save (Ctrl+S)">' + H.icon('save') + '<span>Save</span></button>' +
       '      <button class="ak-btn ak-btn--subtle" data-act="refresh" title="Reload every linked sheet from Business Central">' + H.icon('refresh') + '<span>Refresh</span></button>' +
       '      <span class="ak-bar__sep" aria-hidden="true"></span>' +
@@ -92,7 +97,7 @@
 
     var ids = ['app', 'sheet', 'panel', 'dirty', 'title', 'code', 'file', 'bar-sources', 'progress', 'progress-bar', 'boot',
       'table-search', 'table-results', 'table-picked', 'step-fields', 'field-search', 'field-list', 'field-count',
-      'max-rows', 'sheet-name', 'load', 'load-hint', 'source-list',
+      'max-rows', 'sheet-name', 'load', 'load-hint', 'source-list', 'edit', 'edit-wrap', 'write', 'write-count',
       'j-left', 'j-right', 'j-keys', 'j-cols', 'j-name', 'j-run', 'j-hint', 'j-status', 'j-case', 'autosave',
       'r-left', 'r-right', 'r-llabel', 'r-rlabel', 'r-keys', 'r-norm', 'r-group', 'r-lamt', 'r-lminus', 'r-ramt', 'r-rminus',
       'r-flip', 'r-tol', 'r-ldate', 'r-rdate', 'r-ad', 'r-days', 'r-lextra', 'r-rextra', 'r-name', 'r-summary', 'r-run', 'r-hint', 'r-tip'];
@@ -144,6 +149,8 @@
       '      <label><input type="radio" name="ak-dest" value="new" checked><span>New sheet</span></label>' +
       '      <label><input type="radio" name="ak-dest" value="active"><span>Replace active sheet</span></label>' +
       '    </div>' +
+      '    <label class="ak-check ak-edit-opt" id="ak-edit-wrap" hidden><input type="checkbox" id="ak-edit">' +
+      '<span><b>Allow editing</b><br>Change values in the sheet and use <b>Save to BC</b>. Key and calculated fields stay locked.</span></label>' +
       '  </section>' +
       '  <section class="ak-step ak-step--sources">' +
       '    <div class="ak-step__label">' + H.icon('link') + 'Linked sheets</div>' +
@@ -295,6 +302,7 @@
       var sheetId = btn.getAttribute('data-sheet');
       switch (act) {
         case 'save': requestSave(); break;
+        case 'write': saveToBC(); break;
         case 'refresh': refreshAll(); break;
         case 'import': chooseImportFile(); break;
         case 'export': requestExport(); break;
@@ -374,6 +382,7 @@
       updateLoadState();
     });
     ui.loadBtn.addEventListener('click', loadFromPanel);
+    ui.edit.addEventListener('change', function () { renderFields(); updateLoadState(); });
 
     // Combine view
     ui.jLeft.addEventListener('change', function () { onCombineSheetsChanged(); });
@@ -444,6 +453,7 @@
 
     state.disposables.push(state.api.addEvent(state.api.Event.CommandExecuted, function (evt) {
       if (evt && evt.type === MUTATION && state.suppressDirty === 0) setDirty(true);
+      if (evt && evt.type === MUTATION) onSheetMutation(evt);
     }));
 
     // Univer listens to window resize; BC resizes the iframe but the panel changes our own width.
@@ -540,6 +550,7 @@
     updateLoadState();
     updateCombineState();
     updateReconState();
+    updateWriteButton();
   }
 
   // =====================================================================================
@@ -619,6 +630,8 @@
     ui.fieldList.innerHTML = '';
     ui.fieldCount.textContent = '';
     ui.sheetName.value = '';
+    ui.editWrap.hidden = true;
+    ui.edit.checked = false;
     updateLoadState();
     ui.tableSearch.focus();
   }
@@ -634,6 +647,8 @@
       state.fieldState[f.no] = { checked: pick, filter: '' };
     });
     ui.sheetName.value = H.safeSheetName(data.tableCaption);
+    ui.editWrap.hidden = !data.canEdit;
+    ui.edit.checked = false;
     ui.fieldSearch.value = '';
     state.fieldSearch = '';
     renderFields();
@@ -647,13 +662,14 @@
     var html = state.table.fields.filter(function (f) {
       return !q || f.caption.toLowerCase().indexOf(q) >= 0 || f.name.toLowerCase().indexOf(q) >= 0 || String(f.no) === q;
     }).map(function (f) {
-      var fs = state.fieldState[f.no];
-      return '<div class="ak-frow' + (fs.checked ? ' is-checked' : '') + (fs.filter ? ' has-filter' : '') + '" data-field="' + f.no + '">' +
-        '<label class="ak-frow__main"><input type="checkbox"' + (fs.checked ? ' checked' : '') + '>' +
+      var fs = state.fieldState[f.no], editing = isEditing(), forced = editing && f.pk, on = fs.checked || forced;
+      return '<div class="ak-frow' + (on ? ' is-checked' : '') + (fs.filter ? ' has-filter' : '') + '" data-field="' + f.no + '">' +
+        '<label class="ak-frow__main"><input type="checkbox"' + (on ? ' checked' : '') + (forced ? ' disabled title="Key fields are needed to save changes"' : '') + '>' +
         '<span class="ak-frow__text"><span class="ak-frow__cap">' + H.escapeHtml(f.caption) + '</span>' +
         '<span class="ak-frow__meta">' + f.no + ' &middot; ' + H.escapeHtml(f.type) +
         (f.pk ? ' <span class="ak-badge ak-badge--key">' + H.icon('key') + 'Key</span>' : '') +
         (f.flow ? ' <span class="ak-badge ak-badge--flow">' + H.icon('sigma') + 'Calculated</span>' : '') +
+        (editing && f.editable ? ' <span class="ak-badge ak-badge--edit">' + H.icon('pencil') + 'Editable</span>' : '') +
         '</span></span></label>' +
         '<input class="ak-input ak-input--sm ak-filter" placeholder="Filter" value="' + H.escapeHtml(fs.filter) + '" aria-label="Filter for ' + H.escapeHtml(f.caption) + '">' +
         '</div>';
@@ -673,9 +689,14 @@
     renderFields(); updateLoadState();
   }
 
+  function isEditing() {
+    return !!(state.table && state.table.canEdit && ui.edit && ui.edit.checked);
+  }
+
   function selectedFields() {
     if (!state.table) return [];
-    return state.table.fields.filter(function (f) { return state.fieldState[f.no].checked; });
+    var editing = isEditing();
+    return state.table.fields.filter(function (f) { return state.fieldState[f.no].checked || (editing && f.pk); });
   }
 
   function updateLoadState() {
@@ -723,6 +744,7 @@
       filters: fields.filter(function (f) { return state.fieldState[f.no].filter; })
         .map(function (f) { return { fieldNo: f.no, filter: state.fieldState[f.no].filter }; }),
       maxRows: maxRows,
+      editable: isEditing(),
       lastRows: 0,
       lastCols: 0
     };
@@ -752,7 +774,8 @@
         tableNo: source.tableNo,
         fields: source.fields.map(function (f) { return f.no; }),
         filters: source.filters,
-        maxRows: source.maxRows
+        maxRows: source.maxRows,
+        editable: !!source.editable
       })]).catch(function (e) { failRequest(requestId, e.message || String(e)); });
     }).then(function (r) { setBusy(false); return r; }, function (e) { setBusy(false); throw e; });
   }
@@ -763,9 +786,13 @@
     if (chunk.chunk === 0) {
       p.columns = chunk.columns;
       p.filterText = chunk.filterText;
+      p.editable = !!chunk.editable;
+      p.canInsert = !!chunk.canInsert;
+      p.versions = [];
     }
     var rows = chunk.rows || [];
     for (var i = 0; i < rows.length; i++) p.rows.push(rows[i]);
+    if (chunk.versions) for (var v = 0; v < chunk.versions.length; v++) p.versions.push(chunk.versions[v]);
     var target = Math.min(chunk.total, p.source.maxRows);
     setProgress(target > 0 ? chunk.loaded / target : -1);
     if (!chunk.isLast) return;
@@ -779,7 +806,16 @@
         for (var c = 0; c < types.length; c++) out[c] = convertValue(types[c], src[c]);
         return out;
       });
-      writeTable(p.source, columns.map(function (c) { return c.caption; }), types, values);
+      var header = columns.map(function (c) { return c.caption; });
+      if (p.editable) {
+        // Extra last column: BC Status (Changed / New / Saved / BC's error message).
+        header.push('BC Status');
+        types = types.concat(['Text']);
+        values.forEach(function (row) { row.push(''); });
+      }
+      p.source.editable = p.editable;
+      applying(function () { writeTable(p.source, header, types, values); });
+      if (p.editable) setupEditable(p.source, columns, values, p.versions, p.canInsert);
       p.source.filterText = p.filterText || '';
       p.source.loadedAt = new Date().toISOString();
       p.source.total = chunk.total;
@@ -913,6 +949,10 @@
       return Promise.resolve();
     }
     if (state.busy) return Promise.resolve();
+    return confirmDiscard(sources).then(function (ok) { if (ok) return refreshAllNow(sources, derived); });
+  }
+
+  function refreshAllNow(sources, derived) {
     var done = 0, rows = 0;
     var chain = Promise.resolve();
     sources.forEach(function (s) {
@@ -930,7 +970,9 @@
   function refreshOne(sheetId) {
     if (state.busy) return;
     var s = state.sources[sheetId], j = state.joins[sheetId], rc = state.recons[sheetId];
-    if (s) runSource(s).then(function (r) { H.toast('success', s.tableCaption + ': ' + H.formatInt(r.loaded) + ' rows.'); }, function () { });
+    if (s) confirmDiscard([s]).then(function (ok) {
+      if (ok) runSource(s).then(function (r) { H.toast('success', s.tableCaption + ': ' + H.formatInt(r.loaded) + ' rows.'); }, function () { });
+    });
     else if (j) {
       try { var r = runJoin(j); H.toast('success', 'Recombined: ' + H.formatInt(r.rows) + ' rows.'); } catch (e) { reportError(e); }
     } else if (rc) {
@@ -940,6 +982,7 @@
 
   function unlinkSource(sheetId) {
     delete state.sources[sheetId];
+    updateWriteButton();
     delete state.joins[sheetId];
     delete state.recons[sheetId];
     renderSources(); renderBarSources(); setDirty(true);
@@ -988,6 +1031,344 @@
         H.formatInt(r.matched || 0) + ' matched, ' + H.formatInt(r.exceptions || 0) + ' exceptions' + when(r.builtAt),
         '<span class="ak-badge ak-badge--recon">' + H.icon('scale') + '</span>');
     })).join('');
+  }
+
+  // =====================================================================================
+  // Stage 1: editable sheets (write-back to Business Central)
+  //
+  // A sheet loaded with "Allow editing" keeps a copy of every loaded row by primary key (orig) and
+  // the record's SystemModifiedAt (ver). On each edit the sheet is compared with that copy:
+  //   - an existing key with different values in editable columns -> 'modify'
+  //   - a row whose key is not in the copy (typed below the data)  -> 'insert'
+  // Key, calculated and system columns are locked: an edit there is put back at once.
+  // Save to BC sends the changes to AL, which validates each field like the standard page and
+  // answers per row; the BC Status column shows "Saved" or BC's own error message.
+  // =====================================================================================
+  var EDIT_COLORS = { locked: '#F3F2F1', lockedText: '#605E5C', changed: '#FFF4CE', added: '#E7F6EC', head: '#EBF3FC', statusHead: '#323130' };
+  var STATUS_CHANGED = 'Changed', STATUS_NEW = 'New';
+
+  function editableList() { return sourceList().filter(function (s) { return s.editable; }); }
+
+  function sourceBySheet(sheetId) {
+    var s = state.sources[sheetId];
+    return s && s.editable ? s : null;
+  }
+
+  function keyOf(source, row) {
+    return source.keyIdx.map(function (i) { return toBC(source.columns[i].type, row[i]); }).join('\u0001');
+  }
+
+  /** Sheet value -> the text AL expects for that field type. */
+  function toBC(type, v) {
+    if (v == null) return '';
+    if (type === 'Date') return H.serialToIsoDate(v);
+    if (type === 'DateTime') return H.serialToIsoDateTime(v);
+    if (type === 'Boolean') {
+      if (v === '') return '';
+      var t = String(v).trim().toLowerCase();
+      return (v === true || t === 'true' || t === 'yes' || t === '1') ? 'true' : 'false';
+    }
+    if (NUMERIC_TYPES[type]) {
+      if (v === '') return '';
+      if (typeof v === 'number') return String(Math.round(v * 1e9) / 1e9);
+      var n = String(v).replace(/,/g, '').trim();
+      return n;
+    }
+    return String(v).trim();
+  }
+
+  function sameValue(type, a, b) {
+    var x = toBC(type, a), y = toBC(type, b);
+    if (NUMERIC_TYPES[type] && x !== '' && y !== '' && isFinite(+x) && isFinite(+y)) return Math.abs(+x - +y) < 1e-9;
+    if (type === 'Boolean') return (x || 'false') === (y || 'false');
+    return x === y;
+  }
+
+  /** Called after an editable load: remembers the loaded rows and paints locked columns. */
+  function setupEditable(source, columns, rows, versions, canInsert) {
+    source.columns = columns.map(function (c) { return { no: c.no, caption: c.caption, type: c.type, pk: !!c.pk, editable: !!c.editable }; });
+    source.keyIdx = [];
+    source.columns.forEach(function (c, i) { if (c.pk) source.keyIdx.push(i); });
+    source.dataCols = source.columns.length;
+    source.statusCol = source.columns.length;
+    source.canInsert = !!canInsert;
+    source.orig = {};
+    source.ver = {};
+    source.posKeys = [];
+    rows.forEach(function (r, i) {
+      var k = keyOf(source, r);
+      source.orig[k] = r.slice(0, source.dataCols);
+      source.ver[k] = (versions && versions[i]) || '';
+      source.posKeys[i + 1] = k;
+    });
+    source.changeCount = 0;
+    paintBase(source, true);
+    updateWriteButton();
+  }
+
+  /** Base look: locked columns grey, editable columns white, status column header dark. Clears old change marks. */
+  function paintBase(source, includeHeader) {
+    var sheet = workbook().getSheetBySheetId(source.sheetId);
+    if (!sheet) return;
+    var n = source.dataCols;
+    var rows = Math.max(sheet.getLastRow(), source.paintedRows || 0, 1) + 20;
+    applying(function () {
+      source.columns.forEach(function (c, i) {
+        var range = sheet.getRange(1, i, rows, 1);
+        range.setBackgroundColor(c.editable ? '#FFFFFF' : EDIT_COLORS.locked);
+        range.setFontColor(c.editable ? '#242424' : EDIT_COLORS.lockedText);
+        // Number formats also cover the empty rows below, so new rows look like the loaded ones.
+        if (NUMBER_FORMATS[c.type]) { try { range.setNumberFormat(NUMBER_FORMATS[c.type]); } catch (e) { /* optional */ } }
+        if (includeHeader) {
+          var h = sheet.getRange(0, i, 1, 1);
+          h.setBackgroundColor(c.editable ? EDIT_COLORS.head : '#E1DFDD');
+        }
+      });
+      var st = sheet.getRange(1, n, rows, 1);
+      st.setBackgroundColor('#FFFFFF');
+      if (includeHeader) sheet.setColumnWidths(n, 1, 340);
+      if (includeHeader) {
+        var sh = sheet.getRange(0, n, 1, 1);
+        sh.setBackgroundColor(EDIT_COLORS.statusHead);
+        sh.setFontColor('#FFFFFF');
+        sh.setFontWeight('bold');
+      }
+    });
+    source.paintedRows = rows;
+  }
+
+  /** Runs fn while edit tracking ignores the mutations it causes (styles, status text, saved values). */
+  function applying(fn) {
+    state.applying = (state.applying || 0) + 1;
+    try { return fn(); } finally { state.applying--; }
+  }
+
+  /** Univer mutation hook: protects locked cells and schedules a change check. */
+  function onSheetMutation(evt) {
+    if (state.applying || !evt || !evt.params) return;
+    var id = evt.id, params = evt.params;
+    var source = sourceBySheet(params.subUnitId);
+    if (!source) return;
+    if (id === 'sheet.mutation.set-range-values' && params.cellValue) {
+      var reverts = [];
+      Object.keys(params.cellValue).forEach(function (rk) {
+        var r = +rk, rowCells = params.cellValue[rk];
+        if (r < 1) return;
+        Object.keys(rowCells).forEach(function (ck) {
+          var c = +ck, cell = rowCells[ck];
+          if (c >= source.dataCols || !cell || !('v' in cell || 'f' in cell || 'p' in cell)) return;
+          var k = source.posKeys[r];
+          if (k != null && source.orig[k] && !source.columns[c].editable) reverts.push({ r: r, c: c, v: source.orig[k][c] });
+        });
+      });
+      if (reverts.length) setTimeout(function () { revertCells(source, reverts); }, 0);
+      scheduleDiff(source);
+    } else if (/reorder-range|move-rows|remove-rows|insert-row|move-range/.test(id)) {
+      // Rows moved (sort, insert, delete): marks moved with them, so repaint and check again.
+      setTimeout(function () { paintBase(source, false); diffSource(source); }, 0);
+    }
+  }
+
+  function revertCells(source, reverts) {
+    var sheet = workbook().getSheetBySheetId(source.sheetId);
+    if (!sheet) return;
+    applying(function () {
+      reverts.forEach(function (x) { sheet.getRange(x.r, x.c, 1, 1).setValue(x.v == null ? '' : x.v); });
+    });
+    var cols = reverts.map(function (x) { return source.columns[x.c].caption; })
+      .filter(function (v, i, a) { return a.indexOf(v) === i; }).slice(0, 3).join(', ');
+    H.toast('warning', cols + (reverts.length > 1 ? ' are' : ' is') + ' read-only here (key, calculated or system field). The value was put back.');
+    scheduleDiff(source);
+  }
+
+  function scheduleDiff(source) {
+    clearTimeout(source._diffTimer);
+    source._diffTimer = setTimeout(function () { diffSource(source); }, 350);
+  }
+
+  /** Compares the sheet with the loaded rows. Returns the list of changes and marks them in the sheet. */
+  function diffSource(source) {
+    var sheet = workbook() && workbook().getSheetBySheetId(source.sheetId);
+    if (!sheet || !source.columns) return [];
+    var n = source.dataCols, last = sheet.getLastRow();
+    var raw = last >= 1 ? sheet.getRange(1, 0, last, n + 1).getRawValues() : [];
+    var changes = [], seen = {}, posKeys = [];
+    raw.forEach(function (full, i) {
+      var r = i + 1, row = full.slice(0, n), status = full[n];
+      var empty = row.every(function (v) { return v == null || v === ''; });
+      if (empty) {
+        if (status === STATUS_NEW || status === STATUS_CHANGED) changes.push({ r: r, op: 'clear' });
+        return;
+      }
+      var k = keyOf(source, row), orig = source.orig[k];
+      if (orig && !seen[k]) {
+        seen[k] = true;
+        posKeys[r] = k;
+        var cols = [];
+        source.columns.forEach(function (c, ci) { if (c.editable && !sameValue(c.type, row[ci], orig[ci])) cols.push(ci); });
+        if (cols.length) changes.push({ r: r, op: 'modify', key: k, row: row, cols: cols, status: status });
+        else if (status === STATUS_CHANGED) changes.push({ r: r, op: 'clear' });
+      } else {
+        var filled = [];
+        source.columns.forEach(function (c, ci) { if ((c.editable || c.pk) && row[ci] !== '' && row[ci] != null) filled.push(ci); });
+        changes.push({ r: r, op: 'insert', row: row, cols: filled, status: status });
+      }
+    });
+    source.posKeys = posKeys;
+    markChanges(source, sheet, changes);
+    var real = changes.filter(function (x) { return x.op !== 'clear'; });
+    source.changeCount = real.length;
+    updateWriteButton();
+    return real;
+  }
+
+  function markChanges(source, sheet, changes) {
+    var n = source.dataCols;
+    applying(function () {
+      (source.marks || []).forEach(function (m) {
+        var c = source.columns[m.c];
+        if (c) sheet.getRange(m.r, m.c, 1, 1).setBackgroundColor(c.editable ? '#FFFFFF' : EDIT_COLORS.locked);
+      });
+      source.marks = [];
+      changes.forEach(function (x) {
+        if (x.op === 'clear') { sheet.getRange(x.r, n, 1, 1).setValue(''); return; }
+        if (source.marks.length > 3000) return;
+        var color = x.op === 'insert' ? EDIT_COLORS.added : EDIT_COLORS.changed;
+        var cols = x.op === 'insert' ? source.columns.map(function (c, i) { return i; }) : x.cols;
+        cols.forEach(function (ci) {
+          sheet.getRange(x.r, ci, 1, 1).setBackgroundColor(color);
+          source.marks.push({ r: x.r, c: ci });
+        });
+        var label = x.op === 'insert' ? STATUS_NEW : STATUS_CHANGED;
+        if (!x.status || x.status === STATUS_CHANGED || x.status === STATUS_NEW || /^Saved/.test(String(x.status))) {
+          var cell = sheet.getRange(x.r, n, 1, 1);
+          cell.setValue(label);
+          cell.setFontColor(x.op === 'insert' ? '#0E700E' : '#835B00');
+        }
+      });
+    });
+  }
+
+  function updateWriteButton() {
+    if (!ui.write) return;
+    var total = editableList().reduce(function (t, s) { return t + (s.changeCount || 0); }, 0);
+    ui.write.hidden = editableList().length === 0;
+    ui.write.disabled = total === 0 || state.busy;
+    ui.writeCount.textContent = total ? String(total) : '';
+    ui.writeCount.hidden = !total;
+  }
+
+  /** Toolbar "Save to BC": writes every editable sheet that has changes, one sheet after the other. */
+  function saveToBC() {
+    if (state.busy) return;
+    var work = editableList().map(function (s) { return { source: s, changes: diffSource(s) }; })
+      .filter(function (w) { return w.changes.length; });
+    if (!work.length) { H.toast('info', 'No changes to save to Business Central.'); return; }
+    var nMod = 0, nNew = 0;
+    work.forEach(function (w) { w.changes.forEach(function (x) { if (x.op === 'insert') nNew++; else nMod++; }); });
+    var parts = [];
+    if (nMod) parts.push(nMod + (nMod === 1 ? ' changed row' : ' changed rows'));
+    if (nNew) parts.push(nNew + (nNew === 1 ? ' new row' : ' new rows'));
+    H.choose('Write ' + parts.join(' and ') + ' to Business Central? Each field is checked by BC like on the normal page. Rows with an error are not saved.',
+      [{ label: 'Save to BC', value: true, primary: true }], 'Save to Business Central')
+      .then(function (ok) {
+        if (!ok) return;
+        setBusy(true);
+        setProgress(-1);
+        var totals = { saved: 0, failed: 0 };
+        var chain = Promise.resolve();
+        work.forEach(function (w) {
+          chain = chain.then(function () { return writeSource(w.source, w.changes); })
+            .then(function (r) { totals.saved += r.saved; totals.failed += r.failed; });
+        });
+        return chain.then(function () {
+          setBusy(false);
+          if (totals.failed) H.toast('warning', 'Saved ' + totals.saved + (totals.saved === 1 ? ' row' : ' rows') + '. ' + totals.failed + (totals.failed === 1 ? ' row has' : ' rows have') + ' an error: see the BC Status column.');
+          else H.toast('success', 'Saved ' + totals.saved + (totals.saved === 1 ? ' row' : ' rows') + ' to Business Central.');
+        }, function (e) { setBusy(false); reportError(e); });
+      });
+  }
+
+  function writeSource(source, changes) {
+    var limit = 1000;
+    if (changes.length > limit) {
+      H.toast('warning', 'Saving the first ' + limit + ' rows of ' + sheetName(source.sheetId) + '. Click Save to BC again for the rest.');
+      changes = changes.slice(0, limit);
+    }
+    var keyNos = source.keyIdx.map(function (i) { return source.columns[i].no; });
+    var payload = {
+      requestId: 'w' + (++state.requestSeq),
+      sheetId: source.sheetId,
+      tableNo: source.tableNo,
+      fields: source.columns.map(function (c) { return c.no; }),
+      keyFields: keyNos,
+      changes: changes.map(function (x) {
+        return {
+          row: x.r,
+          op: x.op,
+          key: source.keyIdx.map(function (i) { return toBC(source.columns[i].type, x.row[i]); }),
+          version: x.op === 'modify' ? (source.ver[x.key] || '') : '',
+          values: x.cols.filter(function (ci) { return !source.columns[ci].pk; }).map(function (ci) {
+            return { no: source.columns[ci].no, value: toBC(source.columns[ci].type, x.row[ci]) };
+          })
+        };
+      })
+    };
+    return new Promise(function (resolve, reject) {
+      state.writes[payload.requestId] = { source: source, resolve: resolve, changes: changes };
+      H.sendChunked('write', JSON.stringify(payload), state.config.chunkSize).catch(function (e) {
+        delete state.writes[payload.requestId];
+        reject(e);
+      });
+    });
+  }
+
+  /** AL answer to a write: shows the saved values (Validate may have changed other fields) and each row's status. */
+  function onWriteResult(text) {
+    var res = JSON.parse(text);
+    var w = state.writes[res.requestId];
+    if (!w) return;
+    delete state.writes[res.requestId];
+    var source = w.source;
+    if (res.refused) {
+      H.toast('error', res.refused);
+      w.resolve({ saved: 0, failed: w.changes.length });
+      return;
+    }
+    var sheet = workbook().getSheetBySheetId(source.sheetId);
+    var n = source.dataCols, time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    applying(function () {
+      (res.results || []).forEach(function (r) {
+        var st = sheet.getRange(r.row, n, 1, 1);
+        if (r.ok) {
+          var values = source.columns.map(function (c, i) { return convertValue(c.type, r.values[i]); });
+          sheet.getRange(r.row, 0, 1, n).setValues([values]);
+          var change = w.changes.filter(function (x) { return x.r === r.row; })[0];
+          if (change && change.op === 'modify') { delete source.orig[change.key]; delete source.ver[change.key]; }
+          var k = keyOf(source, values);
+          source.orig[k] = values;
+          source.ver[k] = r.version || '';
+          st.setValue('Saved ' + time);
+          st.setFontColor('#0E700E');
+        } else {
+          st.setValue(r.error || 'Not saved');
+          st.setFontColor('#A4262C');
+        }
+      });
+    });
+    setDirty(true);
+    diffSource(source);
+    w.resolve({ saved: res.saved || 0, failed: res.failed || 0 });
+  }
+
+  /** Before a refresh replaces an editable sheet: ask when it still has unsaved BC changes. */
+  function confirmDiscard(sources) {
+    var pending = sources.filter(function (s) { return s.editable && diffSource(s).length; });
+    if (!pending.length) return Promise.resolve(true);
+    var n = pending.reduce(function (t, s) { return t + s.changeCount; }, 0);
+    return H.choose(n + (n === 1 ? ' row has' : ' rows have') + ' changes that are not saved to Business Central. Refresh replaces them with the data from BC.',
+      [{ label: 'Refresh and discard', value: true, primary: true }], 'Unsaved BC changes')
+      .then(function (v) { return v === true; });
   }
 
   // =====================================================================================
@@ -1692,7 +2073,11 @@
       version: 3,
       savedAt: new Date().toISOString(),
       snapshot: wb.save(),
-      sources: sources,
+      sources: sources.map(function (src) {
+        var copy = {};
+        Object.keys(src).forEach(function (k) { if (k.charAt(0) !== '_' && k !== 'posKeys' && k !== 'marks') copy[k] = src[k]; });
+        return copy;
+      }),
       joins: joins,
       recons: recons
     };
@@ -1714,6 +2099,8 @@
     state.joins = {};
     state.recons = {};
     (env.sources || []).forEach(function (s) { state.sources[s.sheetId] = s; });
+    // Editable sheets: rebuild the row positions and change marks from the saved copy of the loaded rows.
+    setTimeout(function () { editableList().forEach(function (s) { s.marks = []; diffSource(s); }); updateWriteButton(); }, 600);
     (env.joins || []).forEach(function (j) { state.joins[j.sheetId] = j; });
     (env.recons || []).forEach(function (r) { state.recons[r.sheetId] = r; });
     renderSources(); renderBarSources();
@@ -1976,6 +2363,7 @@
     if (full === null) return;
     if (purpose === 'load') loadEnvelope(full);
     else if (purpose === 'import') importXlsxBuffer(H.base64ToArrayBuffer(full), 'replace');
+    else if (purpose === 'writeresult') onWriteResult(full);
   });
 
   window.RequestSave = guard(function () { requestSave(); });
@@ -1985,7 +2373,7 @@
   window.ShowToast = guard(function (level, message) { H.toast(level, message); });
 
   // Exposed for automated tests only.
-  window.AKWorkbookDebug = { state: state, buildXlsx: buildXlsx, runJoin: runJoin, runRecon: runRecon, importXlsxBuffer: importXlsxBuffer };
+  window.AKWorkbookDebug = { state: state, diffSource: diffSource, saveToBC: saveToBC, buildXlsx: buildXlsx, runJoin: runJoin, runRecon: runRecon, importXlsxBuffer: importXlsxBuffer };
 
   // =====================================================================================
   // Boot

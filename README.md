@@ -11,22 +11,28 @@ It puts a full spreadsheet inside Business Central, on a page that is **only the
 - **refresh** every linked sheet with one click (formulas next to the data survive);
 - **save** (or let **AutoSave** do it), **export** to .xlsx, and **import** .xlsx either as new sheets or as a replacement workbook;
 - **combine** two sheets on matching keys (Phase 2);
-- **reconcile** books against a bank statement, GSTR-2B or a party ledger (Phase 3), with an exceptions-first result sheet and a live summary sheet.
+- **reconcile** books against a bank statement, GSTR-2B or a party ledger (Phase 3), with an exceptions-first result sheet and a live summary sheet;
+- **edit BC data in the sheet and save it back** (Stage 1 write-back): change values or type new rows below the data, then **Save to BC**. Each field goes through BC's own `Validate`, and a *BC Status* column shows *Saved* or BC's error per row. Only tables an admin allows can be edited.
 
-Every command (AutoSave, Save, Refresh, Import, Export, Combine, Reconcile, Get data) sits in the add-in's own toolbar. The page has no BC fields or action bar.
+Every command (AutoSave, Save to BC, Save, Refresh, Import, Export, Combine, Reconcile, Get data) sits in the add-in's own toolbar. The page has no BC fields or action bar.
 
-Delivered: Phase 1 (sheet, data explorer, save, refresh, Excel I/O), Phase 2 (Combine), Phase 3 (Reconcile). Next: Phase 4 BC formulas and write-back, Phase 5 Copilot.
+Delivered: Phase 1 (sheet, data explorer, save, refresh, Excel I/O), Phase 2 (Combine), Phase 3 (Reconcile), Stage 1 of the advanced features (editable sheets with write-back). Next stages: journal and document lines, budget grid, cell-driven filters (slicers), drill-down, BC formulas in cells, KPI cards and charts.
 
 ## 2. Object list
 
 | ID | Type | Name |
 |---|---|---|
 | 89000 | Table | AK Workbook |
+| 89001 | Table | AK Workbook Edit Table (allow-list of editable tables) |
 | 89000 | Page | AK Workbook List |
 | 89001 | Page | AK Workbook Editor (`UserControlHost`: the add-in fills the whole page) |
 | 89000 | Codeunit | AK Workbook Data Service |
+| 89002 | Page | AK Workbook Edit Tables (admin: which tables can be edited) |
 | 89001 | Codeunit | AK Workbook Mgt |
+| 89002 | Codeunit | AK Workbook Write Service |
+| 89003 | Codeunit | AK Workbook Write Row |
 | 89000 | PermissionSet | AK Workbook |
+| 89001 | PermissionSet | AK Workbook Admin (includes AK Workbook + editable-table setup) |
 | — | ControlAddIn | AK Excel Workbook |
 
 ID range in app.json: 89000–89049 (room for later phases).
@@ -49,8 +55,9 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 2. **Open the folder in VS Code** with the AL Language extension. `app.json` targets runtime `16.0`, platform and application `27.0.0.0`. Set your sandbox in `.vscode/launch.json`, then run *AL: Download Symbols*.
 3. **Publish** with F5 (sandbox) or build the .app and upload it in *Extension Management → Upload Extension* (production, PTE).
 4. **BC Admin Center:** nothing to configure. The extension uses no outbound HTTP.
-5. **Assign permissions:** give users the permission set **AK Workbook** (*Users → User Permission Sets* or a security group). Users still need their normal permissions for each source table (for example *D365 BASIC*, *D365 FIN. ACC*, GST permission sets). The workbook never bypasses them.
-6. **Use it:** search *Excel Workbooks* → add a line with a code and name → **Open**. The spreadsheet fills the page. Click the workbook name at the top left to rename it.
+5. **Assign permissions:** give users the permission set **AK Workbook** (*Users → User Permission Sets* or a security group). Users still need their normal permissions for each source table (for example *D365 BASIC*, *D365 FIN. ACC*, GST permission sets). The workbook never bypasses them. Give administrators **AK Workbook Admin**.
+6. **Allow editing (optional):** an admin opens *Excel Workbook Editable Tables* and adds the tables users may change from a sheet (for example Item, Customer, Vendor, Item Unit of Measure), with *Allow Modify* and, if wanted, *Allow Insert*. Ledger entries, posted documents, registers, archives and system tables cannot be added. Users also need their normal modify/insert permission on the table.
+7. **Use it:** search *Excel Workbooks* → add a line with a code and name → **Open**. The spreadsheet fills the page. Click the workbook name at the top left to rename it.
 
 **Typical reconciliations**
 
@@ -87,11 +94,25 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 - **Matching runs in passes,** each row used at most once: (1) same key and amount within the tolerance → *Matched*; (2) same key, different amount → *Amount difference*; (3) optionally, same amount within the tolerance and dates within N days, closest date first → *Matched*; leftovers → *Only in <first>* / *Only in <second>*.
 - **Output.** A result sheet sorted exceptions first (differences, then one-sided rows, then matches), with Status and Match rule in columns A–B, both sides' keys, dates and amounts, the *Difference* and *Days apart*, coloured by status. A **summary sheet** uses live `COUNTIF`/`SUMIF` formulas over the result sheet, so when a reviewer changes a status by hand the totals update instantly. It also shows *Matched %* and *Rows to review*. The definition is saved and re-run on **Refresh** after the BC sheets it depends on.
 
+**Editable sheets and write-back (Stage 1).**
+- **Turning it on.** In *Get data*, the *Allow editing* box appears only when the table is on the *Editable Tables* list and the user has write permission (`AK Workbook Write Service.CanModify`). With it ticked, all primary-key fields are loaded (they identify the record). The load adds a *BC Status* column and, per row, the record's `SystemModifiedAt` as a version.
+- **Locked and editable columns.** Normal fields are editable; primary-key fields, FlowFields, system fields (`No. >= 2000000000`) and BLOB/Media fields are locked and shown grey. If a user types or pastes into a locked cell of an existing row, the add-in puts the old value back and says why.
+- **Finding changes.** The add-in keeps a copy of every loaded row by primary key. After each edit it compares the sheet with that copy (by key, so sorting and filtering do not matter): an existing key with a different value in an editable column is a *modify*; a row whose key is not in the copy (typed below the data, key empty when a number series assigns it) is an *insert*. Changed cells turn yellow, new rows green, the BC Status says *Changed* or *New*, and the green **Save to BC** button shows the count. Deleting rows in the sheet never deletes in BC.
+- **Saving (codeunits 89002 and 89003).** *Save to BC* asks for confirmation and sends the changes (chunked, purpose `write`). AL first checks the request in a `TryFunction` (allow-list, permission, at most 1,000 rows); if it is refused the add-in shows the reason. Then every row runs in its own `WriteRow.Run()`:
+  - *Modify*: find the record by its key, stop with "changed in Business Central after you loaded the sheet" if `SystemModifiedAt` differs, `Validate` each changed field in sheet order (text is converted to the field type: Code upper-cased with length check, decimals and dates in XML format, Options/Enums by caption, name or number), then `Modify(true)`.
+  - *Insert*: `Init`, `Validate` the key fields that were typed, `Insert(true)` so the number series and `OnInsert` run, then `Validate` the other fields and `Modify(true)`.
+  - A failing row rolls back only itself; each successful row is committed on its own (per-row commit on purpose: a row is what the user sees and fixes).
+- **Result.** AL sends back each row as BC now has it (Validate often changes other fields, such as *Last Date Modified*), the new version, or BC's own error message. The add-in writes the saved values into the sheet, sets BC Status to *Saved hh:mm* (green) or the error (red), and keeps the failed rows marked so the user can fix and save again. Telemetry `AK0002` logs saved and failed counts per table.
+- **Screenshots** (mock data): [Allow editing](docs/images/stage1-e1-get-data.jpg) · [changes marked](docs/images/stage1-e2-edited.jpg) · [confirm](docs/images/stage1-e3-confirm.jpg) · [per-row results](docs/images/stage1-e4-result.jpg).
+- **Refresh and save.** Refreshing an editable sheet with unsaved BC changes asks first. The copy of the loaded rows is saved with the workbook, so pending changes survive closing and reopening.
+
 **Safety nets.** The JS error boundary catches script errors and unhandled promises, shows a toast, and logs them to telemetry (`AK0001`) through `OnError`. Resizing is handled with a ResizeObserver. On page close the add-in disposes the spreadsheet and its listeners. Confirmations use an in-add-in dialog, because browser dialogs can be blocked inside the BC iframe.
 
 ## 6. Known limitations
 
-- **No write-back yet.** Edits stay in the workbook; they do not change BC records (Phase 4).
+- **Write-back is row by row on plain tables.** It covers tables an admin allows (masters such as Item, Customer, Vendor and simple setup tables). Journal lines, document lines and budgets need their own handling and come in later stages. Rows are never deleted from BC.
+- **Field order matters.** Changed fields are validated left to right, like typing on a page. If one field's validation resets another (for example changing *Unit of Measure* recalculates a price), put the dependent field to the right.
+- **Large saves.** At most 1,000 rows per save; click *Save to BC* again for the rest. Each row is its own transaction, so a long save cannot be undone in one step.
 - **Reconciliation is one-to-one.** One books row (or one grouped key) matches one statement row. Many-to-one cases, such as one bank deposit covering three receipts, show as exceptions; group them with *Sum lines per key* if they share a reference.
 - **Combine and Reconcile run in the browser** on the rows already in the sheets (comfortably up to about 100,000 rows per side), and they find columns by header name. If a header is renamed, Refresh reports the missing column; run the template again.
 - **No close prompt.** BC cannot ask "close without saving?" on a `UserControlHost` page. Keep AutoSave on, or save before leaving.
@@ -104,6 +125,7 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 
 | Version | Date | Change |
 |---|---|---|
+| 1.3.0.0 | 2026-11-25 | Stage 1 **editable sheets with write-back**: *Allow editing* option in Get data; locked key/calculated/system columns; change tracking by primary key with yellow/green marks and a *BC Status* column; **Save to BC** with per-row `Validate` + `Modify(true)` / `Insert(true)`, own transaction per row, `SystemModifiedAt` conflict check and per-row results. New table 89001 and page 89002 (allow-list of editable tables), codeunits 89002 Write Service and 89003 Write Row, permission set 89001 AK Workbook Admin. |
 | 1.2.1.0 | 2026-11-25 | Prefix renamed from AML to AK (objects, publisher, add-in, CSS classes, bundle global `AKUniver`, telemetry tag). No functional change. |
 | 1.2.0.0 | 2026-10-23 | Runtime 16 / BC v27. Editor is a trigger-free `UserControlHost` page (whole page is the spreadsheet). Phase 3 **Reconcile**: GST vs GSTR-2B, Bank vs G/L, Party ledger and Custom templates; multi-pass matching (key + amount, key, amount + date window), tolerance, sign flip, Credit − Debit, document-number normalisation, sum per key; exceptions-first result sheet and live summary sheet. Import can **add sheets** to the current workbook; title rows and two-row headers in imported files are detected. **AutoSave** switch. Visual refresh (Segoe UI Variable, softer surfaces, template tiles). |
 | 1.1.0.0 | 2026-10-23 | Editor shows only the spreadsheet; commands moved into the add-in toolbar; inline rename; in-browser import. Phase 2 **Combine** sheets. Page 89001 renamed "AK Workbook Editor". |

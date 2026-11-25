@@ -1,7 +1,7 @@
 page 89001 "AK Workbook Editor"
 {
     // UserControlHost (runtime 15+): the add-in gets the entire page - no fields, no actions.
-    // Save, Refresh, Get data, Combine, Reconcile, Import and Export live in the add-in's own toolbar.
+    // Save, Refresh, Get data, Combine, Reconcile, Import, Export and Save to BC live in the add-in's own toolbar.
     // This page type allows very few triggers, so all set-up happens in ControlAddInReady.
     Caption = 'Excel Workbook';
     PageType = UserControlHost;
@@ -105,6 +105,7 @@ page 89001 "AK Workbook Editor"
 
     var
         DataService: Codeunit "AK Workbook Data Service";
+        WriteService: Codeunit "AK Workbook Write Service";
         WorkbookMgt: Codeunit "AK Workbook Mgt";
         PayloadBuilder: TextBuilder;
         WorkbookCode: Code[20];
@@ -167,12 +168,31 @@ page 89001 "AK Workbook Editor"
                     if Purpose = 'save' then
                         CurrPage.Workbook.ShowToast('success', SavedMsg);
                 end;
+            'write':
+                WriteToBC(Payload);
             'export':
                 begin
                     Workbook.Get(WorkbookCode);
                     WorkbookMgt.DownloadXlsx(Payload, WorkbookMgt.GetExportFileName(Workbook."Code", Workbook.Description));
                 end;
         end;
+    end;
+
+    /// <summary>Stage 1 write-back: checks the request, applies each row (own transaction per row) and sends the results back.</summary>
+    local procedure WriteToBC(Payload: Text)
+    begin
+        ClearLastError();
+        if not TryCheckWrite(Payload) then begin
+            SendPayload('writeresult', WriteService.BuildRefusedResponse(Payload, GetLastErrorText()));
+            exit;
+        end;
+        SendPayload('writeresult', WriteService.ApplyChanges(Payload));
+    end;
+
+    [TryFunction]
+    local procedure TryCheckWrite(Payload: Text)
+    begin
+        WriteService.CheckRequest(Payload);
     end;
 
     [TryFunction]
