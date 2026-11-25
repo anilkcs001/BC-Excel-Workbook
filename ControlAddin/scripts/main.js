@@ -36,6 +36,7 @@
     importMode: 'replace',
     pending: {},            // requestId -> { source, columns, rows, resolve, reject }
     budgetPending: {},      // budget load requestId -> { source, resolve, reject }
+    slicers: {},            // period pickers: id -> { sheetId, row, col, kind }
     writes: {},             // write requestId -> { source, changes, resolve }
     applying: 0,            // > 0 while the add-in itself changes cells (not a user edit)
     requestSeq: 0,
@@ -144,7 +145,8 @@
       '    </div>' +
       '    <div class="ak-field-list" id="ak-field-list"></div>' +
       '    <p class="ak-help">Filters use Business Central syntax: <code>&gt;0</code>, <code>10000..20000</code>, <code>&lt;&gt;&#39;&#39;</code>, <code>A*|B*</code>, <code>01-04-26..31-03-27</code>. ' +
-      'Put <code>[B1]</code> to take the filter from a cell (also <code>[B1]..[C1]</code> or <code>[Sheet1!B1]</code>): change the cell and the region refreshes.</p>' +
+      'Put <code>[B1]</code> to take the filter from a cell (also <code>[B1]..[C1]</code> or <code>[Sheet1!B1]</code>): change the cell and the region refreshes. ' +
+      'For dates, point to a <b>period picker</b> cell (Quick start or right-click).</p>' +
       '  </section>' +
       '  <section class="ak-step">' +
       '    <div class="ak-step__label"><span class="ak-step__num">3</span>Output</div>' +
@@ -318,6 +320,7 @@
         case 'insert-region': openRegionPanel(null); break;
         case 'quick-start': startQuick(btn.getAttribute('data-quick')); break;
         case 'open-budget': openBudgetPanel(null); break;
+        case 'period-picker': insertPeriodPicker(); break;
         case 'region-props': if (activeRegion()) { if (isBudget(activeRegion())) openBudgetPanel(activeRegion()); else openRegionPanel(activeRegion()); } break;
         case 'region-refresh': if (activeRegion()) refreshOne(activeRegion().id); break;
         case 'region-remove': if (activeRegion()) unlinkSource(activeRegion().id); break;
@@ -1221,8 +1224,11 @@
         var target = sheet ? workbook().getSheetByName(sheet) : workbook().getSheetBySheetId(source.sheetId);
         if (!target) throw new Error('The filter ' + m + ' points to a sheet that does not exist.');
         var ref = /\$?([A-Za-z]{1,3})\$?(\d{1,7})\]$/.exec(m);
-        var cell = target.getRange(+ref[2] - 1, colIndex(ref[1]), 1, 1);
+        var row = +ref[2] - 1, col = colIndex(ref[1]);
+        var cell = target.getRange(row, col, 1, 1);
         var shown = cell.getDisplayValue ? cell.getDisplayValue() : cell.getValue();
+        var picked = slicerFilter(target.getSheetId(), row, col, shown);
+        if (picked !== null) return picked;
         return shown == null ? '' : String(shown).trim();
       });
       return { fieldNo: f.fieldNo, filter: text };
@@ -1242,7 +1248,10 @@
           H.toast('warning', regionLabel(s) + ' was not refreshed: it has changes that are not saved to BC yet.');
           return;
         }
-        runSource(s).then(function (r) { H.toast('info', s.tableCaption + ' refreshed for the new filter value (' + H.formatInt(r.loaded) + ' rows).'); }, function () { });
+        runSource(s).then(function (r) {
+          updateRegionBar();
+          H.toast('info', s.tableCaption + ' refreshed for the new filter value (' + H.formatInt(r.loaded) + ' rows).');
+        }, function () { });
       }, 700);
     });
   }
@@ -1266,6 +1275,15 @@
         return;
       }
       s.anchor = isRow ? { row: pos, col: a.col } : { row: a.row, col: pos };
+    });
+    Object.keys(state.slicers).forEach(function (k) {
+      var p = state.slicers[k];
+      if (p.sheetId !== params.subUnitId) return;
+      var pos = isRow ? p.row : p.col;
+      if (isInsert) { if (start <= pos) pos += count; }
+      else if (end < pos) pos -= count;
+      else if (start <= pos) { delete state.slicers[k]; return; }
+      if (isRow) p.row = pos; else p.col = pos;
     });
     renderSources(); renderBarSources(); updateRegionBar();
   }
@@ -1404,7 +1422,7 @@
           (perRegion[s.id] = perRegion[s.id] || { s: s, cells: [] }).cells.push({ r: r, c: c });
         });
       });
-      if (touched.length) onRefCellsChanged(sheetId, touched);
+      if (touched.length) { onSlicerCells(sheetId, touched); onRefCellsChanged(sheetId, touched); }
       Object.keys(budgetCells).forEach(function (k) { onBudgetCells(budgetCells[k].s, budgetCells[k].cells); });
       Object.keys(perRegion).forEach(function (k) {
         var s = perRegion[k].s, a = anchorOf(s), reverts = [];
@@ -1739,7 +1757,7 @@
     ui.regionbar.innerHTML =
       '<span class="ak-rbar__icon">' + H.icon('table') + '</span>' +
       '<span class="ak-rbar__name">' + H.escapeHtml(s.tableCaption) + '</span>' +
-      '<span class="ak-rbar__meta">' + H.escapeHtml(regionLabel(s)) + ' &middot; ' + H.formatInt(s.rowCount || 0) + (isBudget(s) ? ' accounts &middot; ' + (s.budget.periods) + ' ' + (s.budget.periodType === 'quarter' ? 'quarters' : 'months') : ' rows') +
+      '<span class="ak-rbar__meta">' + H.escapeHtml(regionLabel(s)) + ' &middot; ' + H.formatInt(s.rowCount || 0) + (isBudget(s) ? ' accounts &middot; ' + (s.budget.periods) + ' ' + (s.budget.periodType === 'quarter' ? 'quarters' : 'months') : (s.rowCount === 1 ? ' row' : ' rows')) +
       (s.filters && s.filters.length ? ' &middot; ' + s.filters.length + (s.filters.length === 1 ? ' filter' : ' filters') : '') + '</span>' +
       refs + editSwitch +
       '<span class="ak-rbar__sp"></span>' +
@@ -1800,6 +1818,7 @@
     };
     add('ak.region.insert', 'Insert Business Central region here', function () { openRegionPanel(null); }, 0);
     add('ak.budget.insert', 'Insert budget grid here', function () { openBudgetPanel(null); }, 1);
+    add('ak.period.insert', 'Insert period picker here', function () { insertPeriodPicker(); }, 1);
     add('ak.region.props', 'Region properties', function () { var s = regionAtSelection(); if (s) { if (isBudget(s)) openBudgetPanel(s); else openRegionPanel(s); } else H.toast('info', 'Select a cell inside a region first.'); }, 2);
     add('ak.region.refresh', 'Refresh region', function () { var s = regionAtSelection(); if (s) refreshOne(s.id); else H.toast('info', 'Select a cell inside a region first.'); }, 3);
   }
@@ -1851,10 +1870,12 @@
         H.icon(/jnl/.test(q.id) ? 'receipt' : 'table') + '<span><b>' + H.escapeHtml(q.title) + '</b>' +
         (meta ? '<small>' + H.escapeHtml(meta) + '</small>' : '') + '</span></button>';
     }).join('') : '';
+    ui.quick.hidden = false;
+    if (!list.length) ui.quick.innerHTML = '<span class="ak-quick__label">Quick start</span>';
+    ui.quick.innerHTML += '<button class="ak-quick__btn" data-act="period-picker" title="A dropdown cell that drives date filters">' + H.icon('calendar') +
+      '<span><b>Period picker</b><small>This Month, YTD, Last Year&hellip;</small></span></button>';
     var b = state.config.budget;
     if (b && (b.names || []).length) {
-      ui.quick.hidden = false;
-      if (!list.length) ui.quick.innerHTML = '<span class="ak-quick__label">Quick start</span>';
       ui.quick.innerHTML += '<button class="ak-quick__btn" data-act="open-budget" title="G/L accounts by period">' + H.icon('sliders') +
         '<span><b>Budget grid</b><small>' + H.escapeHtml(b.names.map(function (x) { return x.name; }).slice(0, 3).join(', ')) + '</small></span></button>';
     }
@@ -2306,6 +2327,117 @@
     w.resolve({ saved: res.saved || 0, failed: res.failed || 0 });
     // Totaling accounts (Total revenue...) come from BC: reload the grid when everything was saved.
     if (!res.failed && res.saved) setTimeout(function () { if (!state.busy) runBudget(source).catch(function () { }); }, 300);
+  }
+
+  // =====================================================================================
+  // Stage 4: period picker (a slicer cell)
+  //
+  // A picker is a cell with a dropdown of periods (This Month, Year to Date, Last Year...). The cell to its
+  // right shows the dates. A region filter that points to the picker cell, e.g. Posting Date = [B2], gets
+  // the period as yyyy-mm-dd..yyyy-mm-dd (AL turns it into the user's date format), so one pick refreshes
+  // every region that uses it. A typed BC date filter (01-04-26..30-06-26) is passed through as typed.
+  // =====================================================================================
+  var PERIODS = ['Today', 'This Week', 'This Month', 'Last Month', 'This Quarter', 'Last Quarter',
+    'Year to Date', 'This Year', 'Last Year', 'Fiscal Year to Date', 'This Fiscal Year', 'Last Fiscal Year',
+    'Last 7 Days', 'Last 30 Days', 'Last 90 Days', 'Next 30 Days'];
+
+  function isoDate(d) { return d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth() + 1)).slice(-2) + '-' + ('0' + d.getUTCDate()).slice(-2); }
+  function utc(y, m, d) { return new Date(Date.UTC(y, m, d)); }
+  function workDate() {
+    var w = /^(\d{4})-(\d{2})-(\d{2})/.exec(state.config.workDate || '');
+    var now = new Date();
+    return w ? utc(+w[1], +w[2] - 1, +w[3]) : utc(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+  function fiscalStart(d) {
+    var f = /^(\d{4})-(\d{2})-(\d{2})/.exec((state.config.budget || {}).startDate || '');
+    var month = f ? +f[2] - 1 : 0, day = f ? +f[3] : 1;
+    var y = d.getUTCFullYear(), start = utc(y, month, day);
+    return start > d ? utc(y - 1, month, day) : start;
+  }
+  function addDays(d, n) { return new Date(d.getTime() + n * 86400000); }
+
+  /** Period name -> { from, to } (UTC dates), or null for text that is not a period name. */
+  function periodRange(name) {
+    var d = workDate(), y = d.getUTCFullYear(), m = d.getUTCMonth(), q = Math.floor(m / 3);
+    var fs = fiscalStart(d), fy = function (k) { var s = utc(fs.getUTCFullYear() + k, fs.getUTCMonth(), fs.getUTCDate()); return { from: s, to: addDays(utc(s.getUTCFullYear() + 1, s.getUTCMonth(), s.getUTCDate()), -1) }; };
+    switch (String(name).trim().toLowerCase()) {
+      case 'today': return { from: d, to: d };
+      case 'this week': var dow = (d.getUTCDay() + 6) % 7; return { from: addDays(d, -dow), to: addDays(d, 6 - dow) };
+      case 'this month': return { from: utc(y, m, 1), to: utc(y, m + 1, 0) };
+      case 'last month': return { from: utc(y, m - 1, 1), to: utc(y, m, 0) };
+      case 'this quarter': return { from: utc(y, q * 3, 1), to: utc(y, q * 3 + 3, 0) };
+      case 'last quarter': return { from: utc(y, q * 3 - 3, 1), to: utc(y, q * 3, 0) };
+      case 'year to date': return { from: utc(y, 0, 1), to: d };
+      case 'this year': return { from: utc(y, 0, 1), to: utc(y, 11, 31) };
+      case 'last year': return { from: utc(y - 1, 0, 1), to: utc(y - 1, 11, 31) };
+      case 'fiscal year to date': return { from: fs, to: d };
+      case 'this fiscal year': return fy(0);
+      case 'last fiscal year': return fy(-1);
+      case 'last 7 days': return { from: addDays(d, -6), to: d };
+      case 'last 30 days': return { from: addDays(d, -29), to: d };
+      case 'last 90 days': return { from: addDays(d, -89), to: d };
+      case 'next 30 days': return { from: d, to: addDays(d, 29) };
+    }
+    return null;
+  }
+
+  function slicerAt(sheetId, row, col) {
+    return Object.keys(state.slicers).map(function (k) { return state.slicers[k]; })
+      .filter(function (p) { return p.sheetId === sheetId && p.row === row && p.col === col; })[0] || null;
+  }
+
+  /** Filter text for a reference to a picker cell; null when the cell is not a picker. */
+  function slicerFilter(sheetId, row, col, shown) {
+    if (!slicerAt(sheetId, row, col)) return null;
+    var r = periodRange(shown);
+    return r ? isoDate(r.from) + '..' + isoDate(r.to) : String(shown == null ? '' : shown).trim();
+  }
+
+  function fmtShort(d) {
+    return ('0' + d.getUTCDate()).slice(-2) + '-' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getUTCMonth()] + '-' + String(d.getUTCFullYear()).slice(2);
+  }
+
+  /** Writes the dates of the picked period into the cell to the right of the picker. */
+  function showSlicerDates(p) {
+    var sheet = workbook() && workbook().getSheetBySheetId(p.sheetId);
+    if (!sheet) return;
+    var v = sheet.getRange(p.row, p.col, 1, 1).getValue(), r = periodRange(v);
+    applying(function () {
+      var cell = sheet.getRange(p.row, p.col + 1, 1, 1);
+      cell.setValue(r ? fmtShort(r.from) + ' to ' + fmtShort(r.to) : (v ? 'Custom filter' : ''));
+      cell.setFontColor('#605E5C');
+      cell.setFontStyle && cell.setFontStyle('italic');
+    });
+  }
+
+  function insertPeriodPicker() {
+    var c = selectedCell(), wb = workbook(), sheet = wb.getSheetBySheetId(c.sheetId);
+    if (regionAt(c.sheetId, c.row, c.col)) { H.toast('error', 'Put the period picker outside a region, for example above it.'); return; }
+    var p = { id: H.uid('pp'), sheetId: c.sheetId, row: c.row, col: c.col, kind: 'period' };
+    state.slicers[p.id] = p;
+    applying(function () {
+      var cell = sheet.getRange(c.row, c.col, 1, 1);
+      var current = cell.getValue();
+      if (!current || !periodRange(current)) cell.setValue('This Month');
+      cell.setBackgroundColor('#FFF2CC');
+      cell.setFontWeight('bold');
+      try { cell.setBorder(state.api.Enum.BorderType.OUTSIDE, state.api.Enum.BorderStyleTypes.THIN, '#BF9000'); } catch (e) { /* optional */ }
+      try {
+        var rule = state.api.newDataValidation().requireValueInList(PERIODS, false, true).setAllowInvalid(true).build();
+        cell.setDataValidation(rule);
+      } catch (e) { /* dropdown optional: typing a period name still works */ }
+      sheet.setColumnWidths(c.col, 1, 150);
+      sheet.setColumnWidths(c.col + 1, 1, 170);
+    });
+    showSlicerDates(p);
+    setDirty(true);
+    var ref = '[' + cellName(c.row, c.col) + ']';
+    H.toast('success', 'Period picker in ' + cellName(c.row, c.col) + '. Use ' + ref + ' as the filter of a date field (for example Posting Date) in a region.');
+  }
+
+  /** Picker cells that changed: update their date text (regions using them refresh through the cell references). */
+  function onSlicerCells(sheetId, cells) {
+    cells.forEach(function (x) { var p = slicerAt(sheetId, x.r, x.c); if (p) showSlicerDates(p); });
   }
 
   // =====================================================================================
@@ -3026,7 +3158,8 @@
         return copy;
       }),
       joins: joins,
-      recons: recons
+      recons: recons,
+      slicers: Object.keys(state.slicers).map(function (k) { return state.slicers[k]; })
     };
     var linked = sources.map(function (s) { return s.tableCaption; })
       .filter(function (v, i, a) { return a.indexOf(v) === i; }).join(', ');
@@ -3054,6 +3187,8 @@
     // Editable sheets: rebuild the row positions and change marks from the saved copy of the loaded rows.
     setTimeout(function () { editableList().forEach(function (s) { s.marks = []; diffSource(s); }); updateWriteButton(); updateRegionBar(); }, 600);
     (env.joins || []).forEach(function (j) { state.joins[j.sheetId] = j; });
+    state.slicers = {};
+    (env.slicers || []).forEach(function (p) { state.slicers[p.id] = p; });
     (env.recons || []).forEach(function (r) { state.recons[r.sheetId] = r; });
     renderSources(); renderBarSources();
     setTimeout(function () { state.dirty = true; setDirty(false); }, 450);

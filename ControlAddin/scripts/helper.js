@@ -313,6 +313,7 @@
     receipt: '<path d="M5 2.5h10v15l-2-1.3-1.5 1.3-1.5-1.3-1.5 1.3L7 16.2l-2 1.3z"/><path d="M7.5 6.5h5M7.5 9.5h5M7.5 12.5h3"/>',
     users: '<circle cx="7.5" cy="7" r="2.8"/><path d="M2.5 16.5c.6-2.8 2.5-4.3 5-4.3s4.4 1.5 5 4.3"/><path d="M13 4.5a2.6 2.6 0 0 1 0 5M14.5 12.4c1.6.5 2.6 1.9 3 4.1"/>',
     sliders: '<path d="M4 5h7M15 5h1M4 10h2M10 10h6M4 15h9M17 15h-1"/><circle cx="13" cy="5" r="1.8"/><circle cx="8" cy="10" r="1.8"/><circle cx="15" cy="15" r="1.8"/>',
+    calendar: '<rect x="3" y="4.5" width="14" height="12.5" rx="2"/><path d="M3 8.5h14M7 3v3M13 3v3"/>',
     pencil: '<path d="M13.5 3.5l3 3L7 16H4v-3z"/><path d="M11.5 5.5l3 3"/>',
     lock: '<rect x="4.5" y="9" width="11" height="8" rx="1.5"/><path d="M7 9V6.5a3 3 0 0 1 6 0V9"/>',
     merge: '<circle cx="5" cy="5" r="2"/><circle cx="5" cy="15" r="2"/><circle cx="15" cy="10" r="2"/><path d="M7 5h1.5a3 3 0 0 1 3 3v0a2 2 0 0 0 2 2h0M7 15h1.5a3 3 0 0 0 3-3v0a2 2 0 0 1 2-2"/>'

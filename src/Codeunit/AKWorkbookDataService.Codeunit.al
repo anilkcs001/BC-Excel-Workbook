@@ -24,6 +24,7 @@ codeunit 89000 "AK Workbook Data Service"
         Config.Add('chunkSize', ChunkSize());
         Config.Add('userId', UserId());
         Config.Add('companyName', CompanyName());
+        Config.Add('workDate', Format(WorkDate(), 0, 9));
         Config.WriteTo(Result);
         exit(Result);
     end;
@@ -329,9 +330,38 @@ codeunit 89000 "AK Workbook Data Service"
             FilterText := GetJsonText(FilterObject, 'filter', false);
             if (FilterText <> '') and RecRef.FieldExist(FieldNo) then begin
                 FldRef := RecRef.Field(FieldNo);
+                if FldRef.Type() in [FieldType::Date, FieldType::DateTime] then
+                    FilterText := LocalizeIsoDates(FilterText);
                 FldRef.SetFilter(FilterText);
             end;
         end;
+    end;
+
+    /// <summary>
+    /// The period picker sends dates as yyyy-mm-dd (for example 2026-04-01..2026-11-30). SetFilter reads dates in
+    /// the user's own format, so each ISO date is rewritten with Format(Date) before the filter is applied.
+    /// </summary>
+    procedure LocalizeIsoDates(FilterText: Text): Text
+    var
+        Result: TextBuilder;
+        DateValue: Date;
+        Position: Integer;
+        Candidate: Text;
+    begin
+        Position := 1;
+        while Position <= StrLen(FilterText) do begin
+            Candidate := CopyStr(FilterText, Position, 10);
+            if (StrLen(Candidate) = 10) and (CopyStr(Candidate, 5, 1) = '-') and (CopyStr(Candidate, 8, 1) = '-') and
+               Evaluate(DateValue, Candidate, 9)
+            then begin
+                Result.Append(Format(DateValue));
+                Position += 10;
+            end else begin
+                Result.Append(CopyStr(FilterText, Position, 1));
+                Position += 1;
+            end;
+        end;
+        exit(Result.ToText());
     end;
 
     local procedure BuildColumnJson(FldRef: FieldRef; PkFields: List of [Integer]; Editable: Boolean): JsonObject
