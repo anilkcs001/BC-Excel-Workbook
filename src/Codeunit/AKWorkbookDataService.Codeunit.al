@@ -102,6 +102,7 @@ codeunit 89000 "AK Workbook Data Service"
         Response.Add('canRead', RecRef.ReadPermission());
         Response.Add('canEdit', WriteService.CanModify(TableNo));
         Response.Add('canInsert', WriteService.CanInsert(TableNo));
+        Response.Add('editReason', WriteService.GetEditBlockReason(TableNo));
         Response.Add('fields', Fields);
         RecRef.Close();
         Response.WriteTo(Result);

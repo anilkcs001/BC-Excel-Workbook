@@ -21,6 +21,9 @@ codeunit 89002 "AK Workbook Write Service"
         TooManyChangesErr: Label 'You can save at most %1 rows at a time. Save in smaller parts.', Comment = '%1 = maximum number of rows';
         InvalidRequestErr: Label 'The write request is missing the property "%1".', Comment = '%1 = JSON property name';
         UnknownErrorTxt: Label 'The change could not be saved.';
+        NotListedTxt: Label '%1 is not on the Excel Workbook Editable Tables list. Ask your administrator to add it.', Comment = '%1 = table caption';
+        ModifyOffTxt: Label 'Allow Modify is turned off for %1 on the Excel Workbook Editable Tables page.', Comment = '%1 = table caption';
+        SystemTableTxt: Label 'System tables cannot be edited from a workbook.';
 
     /// <summary>True when the table is in the allow-list with Allow Modify and the user may modify it.</summary>
     procedure CanModify(TableNo: Integer): Boolean
@@ -54,6 +57,28 @@ codeunit 89002 "AK Workbook Write Service"
         Allowed := RecRef.ReadPermission() and RecRef.WritePermission();
         RecRef.Close();
         exit(Allowed);
+    end;
+
+    /// <summary>Why a table cannot be edited from a workbook, in words for the user. Empty when editing is allowed.</summary>
+    procedure GetEditBlockReason(TableNo: Integer): Text
+    var
+        EditTable: Record "AK Workbook Edit Table";
+        RecRef: RecordRef;
+        Reason: Text;
+    begin
+        if TableNo >= 2000000000 then
+            exit(SystemTableTxt);
+        RecRef.Open(TableNo);
+        if not EditTable.Get(TableNo) then
+            Reason := StrSubstNo(NotListedTxt, RecRef.Caption())
+        else
+            if not EditTable."Allow Modify" then
+                Reason := StrSubstNo(ModifyOffTxt, RecRef.Caption())
+            else
+                if not (RecRef.ReadPermission() and RecRef.WritePermission()) then
+                    Reason := StrSubstNo(NoModifyPermissionErr, RecRef.Caption());
+        RecRef.Close();
+        exit(Reason);
     end;
 
     procedure CheckCanModify(TableNo: Integer)

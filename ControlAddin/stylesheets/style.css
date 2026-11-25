@@ -788,3 +788,7 @@ html, body, #controlAddIn, .ak-host {
 .ak-edit-opt b { color: #0e700e; }
 
 .ak-bar__sources > span { overflow: hidden; text-overflow: ellipsis; }
+
+.ak-edit-opt.is-disabled { border-color: var(--ak-stroke, #d1d1d1); background: #faf9f8; cursor: not-allowed; }
+.ak-edit-opt.is-disabled b { color: var(--ak-text-2, #605e5c); }
+.ak-edit-why { display: block; margin-top: 6px; color: #a4262c; font-size: 12px; }

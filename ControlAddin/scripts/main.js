@@ -97,7 +97,7 @@
 
     var ids = ['app', 'sheet', 'panel', 'dirty', 'title', 'code', 'file', 'bar-sources', 'progress', 'progress-bar', 'boot',
       'table-search', 'table-results', 'table-picked', 'step-fields', 'field-search', 'field-list', 'field-count',
-      'max-rows', 'sheet-name', 'load', 'load-hint', 'source-list', 'edit', 'edit-wrap', 'write', 'write-count',
+      'max-rows', 'sheet-name', 'load', 'load-hint', 'source-list', 'edit', 'edit-wrap', 'edit-why', 'write', 'write-count',
       'j-left', 'j-right', 'j-keys', 'j-cols', 'j-name', 'j-run', 'j-hint', 'j-status', 'j-case', 'autosave',
       'r-left', 'r-right', 'r-llabel', 'r-rlabel', 'r-keys', 'r-norm', 'r-group', 'r-lamt', 'r-lminus', 'r-ramt', 'r-rminus',
       'r-flip', 'r-tol', 'r-ldate', 'r-rdate', 'r-ad', 'r-days', 'r-lextra', 'r-rextra', 'r-name', 'r-summary', 'r-run', 'r-hint', 'r-tip'];
@@ -150,7 +150,8 @@
       '      <label><input type="radio" name="ak-dest" value="active"><span>Replace active sheet</span></label>' +
       '    </div>' +
       '    <label class="ak-check ak-edit-opt" id="ak-edit-wrap" hidden><input type="checkbox" id="ak-edit">' +
-      '<span><b>Allow editing</b><br>Change values in the sheet and use <b>Save to BC</b>. Key and calculated fields stay locked.</span></label>' +
+      '<span><b>Allow editing</b><br>Change values in the sheet and use <b>Save to BC</b>. Key and calculated fields stay locked.' +
+      '<span class="ak-edit-why" id="ak-edit-why" hidden></span></span></label>' +
       '  </section>' +
       '  <section class="ak-step ak-step--sources">' +
       '    <div class="ak-step__label">' + H.icon('link') + 'Linked sheets</div>' +
@@ -647,8 +648,13 @@
       state.fieldState[f.no] = { checked: pick, filter: '' };
     });
     ui.sheetName.value = H.safeSheetName(data.tableCaption);
-    ui.editWrap.hidden = !data.canEdit;
+    // Always shown once a table is picked; greyed out with the reason when this table cannot be edited.
+    ui.editWrap.hidden = false;
     ui.edit.checked = false;
+    ui.edit.disabled = !data.canEdit;
+    ui.editWrap.classList.toggle('is-disabled', !data.canEdit);
+    ui.editWhy.hidden = !!data.canEdit;
+    ui.editWhy.textContent = data.canEdit ? '' : (data.editReason || 'This table cannot be edited from a workbook.');
     ui.fieldSearch.value = '';
     state.fieldSearch = '';
     renderFields();
