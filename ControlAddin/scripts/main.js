@@ -326,6 +326,7 @@
         case 'region-props': if (activeRegion()) { if (isBudget(activeRegion())) openBudgetPanel(activeRegion()); else openRegionPanel(activeRegion()); } break;
         case 'region-refresh': if (activeRegion()) refreshOne(activeRegion().id); break;
         case 'region-open': drillAt(selectedCell()); break;
+        case 'region-select': if (activeRegion()) selectRegion(activeRegion(), 'toggle'); break;
         case 'region-remove': if (activeRegion()) unlinkSource(activeRegion().id); break;
         case 'view-combine': togglePanel('combine'); break;
         case 'view-recon': togglePanel('recon'); break;
@@ -1786,6 +1787,7 @@
       refs + editSwitch +
       '<span class="ak-rbar__sp"></span>' +
       '<span class="ak-rbar__hint" title="Ctrl+click a row or amount to open it in Business Central">Ctrl+click to open in BC</span>' +
+      '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="region-select" title="Select the whole region (header and rows). Click again to select only the data rows.">' + H.icon('table') + '<span>Select</span></button>' +
       '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="region-open" title="Open the selected row or amount in Business Central">' + H.icon('link') + '<span>Open</span></button>' +
       '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="region-props">' + H.icon('sliders') + '<span>Properties</span></button>' +
       '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="region-refresh">' + H.icon('refresh') + '<span>Refresh</span></button>' +
@@ -1795,6 +1797,27 @@
   }
 
   function activeRegion() { return state.activeRegion ? state.sources[state.activeRegion] : null; }
+
+  /** Range of a region: 'all' = header + rows, 'data' = rows only (the empty new-row line is not included). */
+  function regionRange(s, part) {
+    var a = anchorOf(s), first = part === 'data' ? a.row + 1 : a.row, last = Math.max(regionEndRow(s), first);
+    return { r: first, c: a.col, rows: last - first + 1, cols: Math.max(regionWidth(s), 1) };
+  }
+
+  /** Selects a region like clicking the corner of an Excel table. 'toggle': whole region first, then only the data rows. */
+  function selectRegion(s, part) {
+    var wb = workbook(), sheet = wb.getSheetBySheetId(s.sheetId);
+    if (!sheet) return;
+    if (part === 'toggle') {
+      var all = regionRange(s, 'all'), cur = selectionRect();
+      part = cur.sheetId === s.sheetId && cur.r === all.r && cur.c === all.c && cur.rows === all.rows && cur.cols === all.cols ? 'data' : 'all';
+    }
+    var g = regionRange(s, part);
+    if (wb.getActiveSheet().getSheetId() !== s.sheetId) wb.setActiveSheet(sheet);
+    sheet.getRange(g.r, g.c, g.rows, g.cols).activate();
+    H.toast('info', (part === 'data' ? 'Data rows selected: ' : 'Region selected: ') + cellName(g.r, g.c) + ':' + cellName(g.r + g.rows - 1, g.c + g.cols - 1) +
+      '. Copy it, format it or click Insert chart.');
+  }
 
   // ---------------------------------------------------------------- Excel-style region look
   /** Excel "Table Style Medium 2" look: blue header, thin border, banded rows for read-only regions. */
@@ -1848,6 +1871,8 @@
     add('ak.budget.insert', 'Insert budget grid here', function () { openBudgetPanel(null); }, 1);
     add('ak.period.insert', 'Insert period picker here', function () { insertPeriodPicker(); }, 1);
     add('ak.region.props', 'Region properties', function () { var s = regionAtSelection(); if (s) { if (isBudget(s)) openBudgetPanel(s); else openRegionPanel(s); } else H.toast('info', 'Select a cell inside a region first.'); }, 2);
+    add('ak.region.select', 'Select region', function () { var s = regionAtSelection(); if (s) selectRegion(s, 'all'); else H.toast('info', 'Select a cell inside a region first.'); }, 2);
+    add('ak.region.selectdata', 'Select region data rows', function () { var s = regionAtSelection(); if (s) selectRegion(s, 'data'); else H.toast('info', 'Select a cell inside a region first.'); }, 2);
     add('ak.region.refresh', 'Refresh region', function () { var s = regionAtSelection(); if (s) refreshOne(s.id); else H.toast('info', 'Select a cell inside a region first.'); }, 3);
   }
 
@@ -2704,19 +2729,32 @@
     return /^[\s]*[-−(]/.test(t) ? -n : n;
   }
 
-  /** Block -> { categories[], series[{ name, values[] }] }: first column labels, first row series names (when they are text). */
+  /**
+   * Block -> { categories[], series[{ name, values[] }] }, read the way Excel reads a chart range:
+   * the first row holds series names when it is text; the label column is the first text column (in a BC
+   * region with No. and Description, Description becomes the label and No. is skipped); a column is a
+   * series only when its cells show numbers, so dates, Yes/No and code columns are left out.
+   */
   function chartSeries(d) {
     var sheet = workbook().getSheetBySheetId(d.sheetId);
     if (!sheet) throw new Error('The sheet with the chart data was deleted.');
-    var block = sheet.getRange(d.r, d.c, d.rows, d.cols).getRawValues();
-    var hasHeader = d.rows > 1 && block[0].some(function (v, i) { return (i > 0 || d.cols === 1) && v !== '' && v != null && isNaN(num(v)); });
-    var body = block.slice(hasHeader ? 1 : 0);
-    var hasLabels = d.cols > 1 && body.some(function (r) { return r[0] !== '' && r[0] != null && isNaN(num(r[0])); });
-    var first = hasLabels ? 1 : 0, series = [];
-    for (var c = first; c < d.cols; c++) {
-      series.push({ name: hasHeader ? String(block[0][c] == null ? '' : block[0][c]) : 'Series ' + (c - first + 1), values: body.map(function (r) { return num(r[c]); }) });
+    var range = sheet.getRange(d.r, d.c, d.rows, d.cols);
+    var block = range.getRawValues(), shown = range.getDisplayValues ? range.getDisplayValues() : block;
+    var isText = function (v) { return v !== '' && v != null && isNaN(num(v)); };
+    var hasHeader = d.rows > 1 && block[0].some(function (v, i) { return (i > 0 || d.cols === 1) && isText(v); });
+    var start = hasHeader ? 1 : 0, body = block.slice(start), bodyShown = shown.slice(start);
+    var textCol = function (c) { return bodyShown.some(function (r) { return isText(r[c]); }) && !bodyShown.every(function (r) { return /^(true|false|yes|no)?$/i.test(String(r[c] == null ? '' : r[c]).trim()); }); };
+    var labelCol = -1;
+    for (var lc = 0; lc < Math.min(d.cols - 1, 3); lc++) if (textCol(lc)) { labelCol = lc; break; }
+    var series = [];
+    for (var c = 0; c < d.cols; c++) {
+      if (c <= labelCol) continue;
+      // Every filled cell must show a number (a date shows "02-Oct-2026", a Boolean "FALSE").
+      var cells = bodyShown.map(function (r) { return r[c]; }).filter(function (v) { return v !== '' && v != null; });
+      if (!cells.length || cells.some(function (v) { return isNaN(num(v)); })) continue;
+      series.push({ name: hasHeader ? String(block[0][c] == null ? '' : block[0][c]) : 'Series ' + (series.length + 1), values: body.map(function (r) { return num(r[c]); }) });
     }
-    var categories = body.map(function (r, i) { return hasLabels ? String(r[0]) : String(i + 1); });
+    var categories = body.map(function (r, i) { return labelCol >= 0 ? String(r[labelCol] == null ? '' : r[labelCol]) : String(i + 1); });
     return { categories: categories, series: series.slice(0, 8), hasHeader: hasHeader };
   }
 
@@ -2942,6 +2980,13 @@
   /** Excel's Insert Chart dialog: one tile per chart type, each a live preview of the selected data. */
   function openChartPicker() {
     var b = selectionRect();
+    var inRegion = b.rows === 1 && b.cols === 1 && regionAt(b.sheetId, b.r, b.c);
+    if (inRegion) {
+      // Like Excel: one cell inside a table means "chart the whole table".
+      var g = regionRange(inRegion, 'all');
+      b = { sheet: b.sheet, sheetId: b.sheetId, r: g.r, c: g.c, rows: g.rows, cols: g.cols };
+      try { b.sheet.getRange(g.r, g.c, g.rows, g.cols).activate(); } catch (e) { /* optional */ }
+    }
     if (b.rows === 1 && b.cols === 1 && isNaN(num(b.sheet.getRange(b.r, b.c, 1, 1).getRawValues()[0][0]))) {
       H.toast('info', 'Select the data first: labels in the first column, series names in the first row and numbers in the rest (for example A4:D7), or one number cell for a KPI card.');
       return;
