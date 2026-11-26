@@ -159,7 +159,10 @@ codeunit 89002 "AK Workbook Write Service"
         Saved: Integer;
         Failed: Integer;
         Result: Text;
+        StartedAt: DateTime;
+        ElapsedMs: BigInteger;
     begin
+        StartedAt := CurrentDateTime();
         Request.ReadFrom(RequestJson);
         TableNo := GetInteger(Request, 'tableNo');
         ReadIntegerList(Request, 'fields', FieldNos);
@@ -190,6 +193,9 @@ codeunit 89002 "AK Workbook Write Service"
         Response.Add('results', Results);
         Response.Add('saved', Saved);
         Response.Add('failed', Failed);
+        // Time spent in BC (validation, triggers, commits), shown to the user next to the total time.
+        ElapsedMs := CurrentDateTime() - StartedAt;
+        Response.Add('ms', ElapsedMs);
         Response.WriteTo(Result);
 
         Session.LogMessage('AK0002', StrSubstNo('Workbook write-back: table %1, %2 saved, %3 failed.', TableNo, Saved, Failed),
