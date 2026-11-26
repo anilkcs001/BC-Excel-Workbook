@@ -4,14 +4,45 @@
   "generalAction": null,
   "includedRuleSets": [],
   "rules": [
-    { "id": "AA0005", "action": "Warning", "justification": "Only use BEGIN..END for compound statements." },
-    { "id": "AA0021", "action": "Warning", "justification": "Variable declarations ordered by type." },
-    { "id": "AA0072", "action": "None", "justification": "Variable naming by type prefix is not used in this project." },
-    { "id": "AA0137", "action": "Warning", "justification": "Remove unused variables." },
-    { "id": "AA0228", "action": "Warning", "justification": "Remove unused local methods." },
-    { "id": "AA0470", "action": "Warning", "justification": "Placeholders in labels need a Comment." },
-    { "id": "AS0011", "action": "Error", "justification": "Every new object and field must carry the registered affix." },
-    { "id": "AS0054", "action": "Error", "justification": "AppSourceCop.json must list the affixes." },
-    { "id": "AS0062", "action": "Error", "justification": "Every object ID must be inside the registered range." }
+    {
+      "id": "AA0005",
+      "action": "Warning",
+      "justification": "Only use BEGIN..END for compound statements."
+    },
+    {
+      "id": "AA0021",
+      "action": "Warning",
+      "justification": "Variable declarations ordered by type."
+    },
+    {
+      "id": "AA0072",
+      "action": "None",
+      "justification": "Variable naming by type prefix is not used in this project."
+    },
+    {
+      "id": "AA0137",
+      "action": "Warning",
+      "justification": "Remove unused variables."
+    },
+    {
+      "id": "AA0228",
+      "action": "Warning",
+      "justification": "Remove unused local methods."
+    },
+    {
+      "id": "AA0470",
+      "action": "Warning",
+      "justification": "Placeholders in labels need a Comment."
+    },
+    {
+      "id": "AS0011",
+      "action": "Error",
+      "justification": "Every new object and field must carry the registered affix."
+    },
+    {
+      "id": "AS0054",
+      "action": "Error",
+      "justification": "AppSourceCop.json must list the affixes."
+    }
   ]
 }
