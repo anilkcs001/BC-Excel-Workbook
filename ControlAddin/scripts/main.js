@@ -1573,6 +1573,8 @@
     source._end = end;
     markChanges(source, sheet, changes);
     var real = changes.filter(function (x) { return x.op === 'modify' || x.op === 'insert'; });
+    // The region grew (a new row typed) or shrank: move the dropdowns with it.
+    if (source._lkRows && lk.cache[source.tableNo] && lookupRows(source) !== source._lkRows) scheduleLookups(source);
     source.changeCount = real.length;
     updateWriteButton();
     return real;
@@ -2750,11 +2752,23 @@
     return -1;
   }
 
-  /** Loaded rows plus room to type new lines (up to the next region below). */
+  /**
+   * Dropdowns stay inside the region: its rows plus the one empty line under them where a new row is typed
+   * (when inserting is allowed). When a new row is typed the region grows and the dropdowns follow (diffSource).
+   */
   function lookupRows(source) {
     var a = anchorOf(source);
-    var rows = Math.max(regionEndRow(source) - a.row, source.paintedRows || 1, 1) + (source.canInsert ? 20 : 0);
+    var rows = Math.max(regionEndRow(source) - a.row, 1) + (source.canInsert ? 1 : 0);
     return Math.min(rows, Math.max(1, roomBelow(source) - 1));
+  }
+
+  /** Removes dropdowns that are below the region (it shrank, or an older version put them 20 rows down). */
+  function clearLookupsBelow(source, sheet, rows) {
+    var a = anchorOf(source), below = Math.max((source._lkRows || 0) - rows, 0);
+    if (!source._lkCleaned) below = Math.max(below, 25);
+    below = Math.min(below, Math.max(0, roomBelow(source) - 1 - rows));
+    if (below > 0) { try { sheet.getRange(a.row + 1 + rows, a.col, below, source.columns.length).setDataValidation(null); } catch (e) { /* none */ } }
+    source._lkCleaned = true;
   }
 
   function listValues(resp, key) {
@@ -2778,6 +2792,8 @@
     source.lookupTypeCols = [];
     source.lookupCount = 0;
     applying(function () {
+      clearLookupsBelow(source, sheet, rows);
+      source._lkRows = rows;
       (resp.lookups || []).forEach(function (l) {
         var ci = colIndex(source, l.field);
         if (ci < 0 || !source.columns[ci].editable) return;

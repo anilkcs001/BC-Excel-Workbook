@@ -127,7 +127,7 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
   - Option / Enum fields: the captions, as BC shows them.
   - Code fields with a table relation: the codes of the related table (from the `Field` table's *RelationTableNo* / *RelationFieldNo*, or the one-field primary key), with descriptions. Blocked records (Boolean *Blocked*) are left out; G/L accounts are posting accounts only; shortcut dimension fields list only that dimension's values (General Ledger Setup).
   - Fields whose relation depends on a type on the same line (*Account No.* and *Bal. Account No.* on Gen. Journal Line, *No.* on Sales and Purchase Line): one list per type (G/L Account, Customer, Vendor, Bank Account, Fixed Asset, Employee, IC Partner, Item, Resource, Charge (Item)). The add-in picks the list row by row from the type cell and switches it when the type changes; an empty type uses BC's default (first) type.
-- Lists are set as Excel-style dropdowns (small arrow, search box) on the loaded rows and 20 rows below for new lines. *Allow other values* stays on: BC still validates on Save to BC, so a code missing from a list (or beyond the first 1,000) can still be typed.
+- Lists are set as Excel-style dropdowns (small arrow, search box) only inside the region: its rows plus the one empty line under them for a new row (when inserting is allowed). When a new row is typed the region grows and the dropdowns move down with it; nothing is left below the region. *Allow other values* stays on: BC still validates on Save to BC, so a code missing from a list (or beyond the first 1,000) can still be typed.
 - Only tables the user can read are listed. Lists are fetched on every region load; reopening a saved workbook asks again. *Remove region* also removes the dropdowns.
 - **Screenshot** (mock data): [Account No. dropdown on a General Journal region](docs/images/stage8-l1-dropdown.png).
 
@@ -219,6 +219,7 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 
 | Version | Date | Change |
 |---|---|---|
+| 2.2.1.0 | 2026-11-26 | Dropdowns stay inside the region (rows + the new-row line) and grow with it; dropdowns left below a region by 2.2.0.0 are cleared. |
 | 2.2.0.0 | 2026-11-26 | Stage 8 **lookup dropdowns** on editable Code and Option columns, filled from BC: option captions, related-table codes (blocked records left out, posting G/L accounts, one dimension's values), and per-row lists for Account No. / Bal. Account No. on journal lines and No. on sales and purchase lines, following the type cell. New codeunit 89009; permission set updated. |
 | 2.1.2.0 | 2026-11-26 | **Remove region**: the region bar's Unlink button becomes *Remove* (also on the right-click menu) with a choice: clear the region from the sheet, or keep the data and only unlink it. |
 | 2.1.1.0 | 2026-11-26 | **Select region** button in the region bar and right-click menu (whole region, then data rows only). Insert chart on a region cell charts the whole region; chart ranges skip code, date and Yes/No columns and use the first text column as labels. |
