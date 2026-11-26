@@ -385,6 +385,7 @@
       var row = e.target.closest('[data-field]');
       if (!row || e.target.type !== 'checkbox') return;
       var fs = state.fieldState[+row.getAttribute('data-field')];
+      if (e.target.hasAttribute('data-list')) { fs.list = e.target.checked; return; }
       fs.checked = e.target.checked;
       row.classList.toggle('is-checked', fs.checked);
       updateLoadState();
@@ -705,7 +706,7 @@
       // Default selection: primary key + the first useful normal fields, like a list page would show.
       var pick = f.pk || (!f.flow && defaults < 8);
       if (pick && !f.pk) defaults++;
-      state.fieldState[f.no] = { checked: pick, filter: '' };
+      state.fieldState[f.no] = { checked: pick, filter: '', list: true };
     });
     ui.sheetName.value = H.safeSheetName(data.tableCaption);
     // Always shown once a table is picked; greyed out with the reason when this table cannot be edited.
@@ -724,6 +725,7 @@
       data.fields.forEach(function (f) { state.fieldState[f.no].checked = false; });
       pre.fields.forEach(function (f) { if (state.fieldState[f.no]) state.fieldState[f.no].checked = true; });
       (pre.filters || []).forEach(function (f) { if (state.fieldState[f.fieldNo]) state.fieldState[f.fieldNo].filter = f.filter; });
+      (pre.noList || []).forEach(function (no) { if (state.fieldState[no]) state.fieldState[no].list = false; });
       ui.maxRows.value = pre.maxRows || state.config.defaultMaxRows;
       ui.edit.checked = !!(pre.editable && data.canEdit);
     }
@@ -748,6 +750,10 @@
         (f.flow ? ' <span class="ak-badge ak-badge--flow">' + H.icon('sigma') + 'Calculated</span>' : '') +
         (editing && f.editable ? ' <span class="ak-badge ak-badge--edit">' + H.icon('pencil') + 'Editable</span>' : '') +
         '</span></span></label>' +
+        // Dropdown tick: only for editable Code and Option fields while editing.
+        (editing && f.editable && LOOKUP_TYPES[f.type]
+          ? '<label class="ak-frow__list" title="Show a dropdown list from BC in this column"><input type="checkbox" data-list' + (fs.list !== false ? ' checked' : '') + '><span>Dropdown</span></label>'
+          : '') +
         '<input class="ak-input ak-input--sm ak-filter" placeholder="Filter" value="' + H.escapeHtml(fs.filter) + '" aria-label="Filter for ' + H.escapeHtml(f.caption) + '">' +
         '</div>';
     }).join('');
@@ -836,6 +842,7 @@
       .map(function (f) { return { fieldNo: f.no, filter: state.fieldState[f.no].filter }; });
     source.maxRows = maxRows;
     source.keyCount = state.table.fields.filter(function (f) { return f.pk; }).length;
+    source.noList = fields.filter(function (f) { return state.fieldState[f.no].list === false && LOOKUP_TYPES[f.type]; }).map(function (f) { return f.no; });
     source.editable = isEditing();
     if (source.editable && !wasEditable) source.editing = true;
     if (!source.editable) { delete source.orig; delete source.ver; delete source.columns; source.editing = undefined; }
@@ -1450,6 +1457,8 @@
     source.changeCount = 0;
     source.marks = [];
     paintBase(source, true);
+    var sheetNow = workbook().getSheetBySheetId(source.sheetId);
+    if (sheetNow) growRegionBox(source, sheetNow);
     updateWriteButton();
     requestLookups(source, true);
   }
@@ -1460,8 +1469,7 @@
     if (!sheet || !source.columns) return;
     var a = anchorOf(source), n = source.dataCols;
     // The loaded rows plus a few empty rows for new records (when inserting is allowed); old paint is cleared.
-    var rows = Math.max(regionEndRow(source) - a.row, 1) + (source.canInsert ? 3 : 0);
-    rows = Math.min(rows, Math.max(1, roomBelow(source)));
+    var rows = boxRows(source) - 1;
     var old = source.paintedRows || 0;
     if (old > rows) applying(function () { sheet.getRange(a.row + 1 + rows, a.col, old - rows, n + 1).setBackgroundColor('#FFFFFF'); });
     applying(function () {
@@ -1617,11 +1625,34 @@
    * (border) grows to take it in, and shrinks back when that row is cleared. It never reaches into another
    * region below, because diffSource only reads rows up to roomBelow().
    */
+  /**
+   * Rows of the blue box: header + data rows + (editable and inserting allowed) one empty line to type a new
+   * row. Typing on that line makes it a data row, so the box grows by one and a new empty line appears.
+   * The box never reaches the row just above another region.
+   */
+  function boxRows(source) {
+    var a = anchorOf(source);
+    var rows = 1 + Math.max(regionEndRow(source) - a.row, 0) + (source.editable && source.canInsert ? 1 : 0);
+    return Math.max(1, Math.min(rows, roomBelow(source) + 1));
+  }
+
   function growRegionBox(source, sheet) {
-    if (!source.styledArea || !source.editable) return;
-    var a = anchorOf(source), want = Math.max(regionEndRow(source) - a.row + 1, source.lastRows || 1);
+    if (!source.styledArea || !source.editable || !source.columns) return;
+    var want = boxRows(source);
     if (want === source.styledArea.rows) return;
-    applying(function () { styleRegion(source, sheet, want, source.styledArea.cols); });
+    applying(function () {
+      styleRegion(source, sheet, want, source.styledArea.cols);
+      // The sheet's filter buttons belong to this region: keep the filter range equal to the box.
+      try {
+        var a = anchorOf(source), f = sheet.getFilter && sheet.getFilter(), fr = f && f.getRange();
+        if (f && fr && fr.getRow() === a.row && fr.getColumn() === a.col && fr.getHeight() !== Math.max(want, 2)) {
+          var cols = fr.getWidth();
+          f.remove();
+          sheet.getRange(a.row, a.col, Math.max(want, 2), cols).createFilter();
+        }
+      } catch (e) { /* filter optional */ }
+    });
+    paintBase(source, false);
   }
 
   function markChanges(source, sheet, changes) {
@@ -2769,7 +2800,8 @@
   var LOOKUP_TTL = 5 * 60 * 1000;
 
   function lookupFields(source) {
-    return (source.columns || []).filter(function (c) { return c.editable && LOOKUP_TYPES[c.type]; }).map(function (c) { return c.no; });
+    var off = source.noList || [];
+    return (source.columns || []).filter(function (c) { return c.editable && LOOKUP_TYPES[c.type] && off.indexOf(c.no) < 0; }).map(function (c) { return c.no; });
   }
 
   function requestLookups(source, force) {
@@ -2805,11 +2837,7 @@
    * Dropdowns stay inside the region: its rows plus the one empty line under them where a new row is typed
    * (when inserting is allowed). When a new row is typed the region grows and the dropdowns follow (diffSource).
    */
-  function lookupRows(source) {
-    var a = anchorOf(source);
-    var rows = Math.max(regionEndRow(source) - a.row, 1) + (source.canInsert ? 1 : 0);
-    return Math.min(rows, Math.max(1, roomBelow(source) - 1));
-  }
+  function lookupRows(source) { return Math.max(boxRows(source) - 1, 1); }
 
   /** Removes dropdowns that are below the region (it shrank, or an older version put them 20 rows down). */
   function clearLookupsBelow(source, sheet, rows) {
@@ -2843,7 +2871,13 @@
     applying(function () {
       clearLookupsBelow(source, sheet, rows);
       source._lkRows = rows;
+      // Columns whose Dropdown tick is off in the region panel: no list.
+      (source.noList || []).forEach(function (no) {
+        var ci = colIndex(source, no);
+        if (ci >= 0) setList(sheet.getRange(a.row + 1, a.col + ci, rows, 1), null);
+      });
       (resp.lookups || []).forEach(function (l) {
+        if ((source.noList || []).indexOf(l.field) >= 0) return;
         var ci = colIndex(source, l.field);
         if (ci < 0 || !source.columns[ci].editable) return;
         if (l.kind === 'byType') {

@@ -386,6 +386,8 @@ html, body, #controlAddIn, .ak-host {
 }
 .ak-frow:hover { background: var(--ak-bg-3); }
 .ak-frow.is-checked { background: var(--ak-accent-soft); }
+.ak-frow__list { grid-column: 1; grid-row: 2; padding-left: 24px; display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--ak-muted); white-space: nowrap; cursor: pointer; }
+.ak-frow__list input { margin: 0; }
 .ak-frow__main { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
 .ak-frow__main input { width: 16px; height: 16px; margin: 0; flex: none; accent-color: var(--ak-accent); cursor: pointer; }
 .ak-frow__text { display: flex; flex-direction: column; min-width: 0; }
