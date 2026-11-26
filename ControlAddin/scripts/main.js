@@ -21,7 +21,7 @@
   var MUTATION = 2; // Univer CommandType.MUTATION
   var NUMERIC_TYPES = { Decimal: 1, Integer: 1, BigInteger: 1, Number: 1 };
 
-  var ADDIN_VERSION = '2.2.5.0';  // shown on the logo tooltip, so testers can see which script BC loaded
+  var ADDIN_VERSION = '2.3.0.0';  // shown on the logo tooltip, so testers can see which script BC loaded
   var state = {
     config: { defaultMaxRows: 10000, maxRowsLimit: 100000, chunkSize: 400000, workbookCode: '', description: '' },
     univer: null,

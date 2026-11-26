@@ -23,5 +23,6 @@ permissionset 89000 "AK Workbook"
         codeunit "AK Workbook Budget Write" = X,
         codeunit "AK Workbook Drill Down" = X,
         codeunit "AK Workbook Formulas" = X,
-        codeunit "AK Workbook Lookups" = X;
+        codeunit "AK Workbook Lookups" = X,
+        codeunit "AK Workbook Write Batch" = X;
 }
