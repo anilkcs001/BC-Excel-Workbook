@@ -222,6 +222,7 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 
 | Version | Date | Change |
 |---|---|---|
+| 2.2.5.0 | 2026-11-26 | **Faster editing and saving**: changed-cell colours and BC Status are painted only where they change (typing 10 rows: about 1,800 style updates down to about 100); new rows painted in one call per run of columns; dropdowns re-applied once per column a moment after typing, which keeps the saved workbook small (10 mixed rows: dropdown data about 19 KB down to 5 KB). The save message shows the total time and the time BC spent. |
 | 2.2.4.0 | 2026-11-26 | Region bar shows **New rows off** when the table does not allow inserts (Edit Tables > Allow Insert, or no insert permission). The add-in version is shown on the logo tooltip. |
 | 2.2.3.0 | 2026-11-26 | The box always ends with an empty line for a new row and grows when that line is used; dropdowns, formats and the filter range follow the box. *Dropdown* tick per field in the region panel. |
 | 2.2.2.0 | 2026-11-26 | *Insert region* asks before placing a new region and offers *Update existing* when the same table already has a region. The region box grows with new rows typed under an editable region (up to the next region). Clear message when Ctrl+clicking a new, unsaved row. |

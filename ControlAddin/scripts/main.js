@@ -21,7 +21,7 @@
   var MUTATION = 2; // Univer CommandType.MUTATION
   var NUMERIC_TYPES = { Decimal: 1, Integer: 1, BigInteger: 1, Number: 1 };
 
-  var ADDIN_VERSION = '2.2.4.0';  // shown on the logo tooltip, so testers can see which script BC loaded
+  var ADDIN_VERSION = '2.2.5.0';  // shown on the logo tooltip, so testers can see which script BC loaded
   var state = {
     config: { defaultMaxRows: 10000, maxRowsLimit: 100000, chunkSize: 400000, workbookCode: '', description: '' },
     univer: null,
@@ -1474,15 +1474,11 @@
     var old = source.paintedRows || 0;
     if (old > rows) applying(function () { sheet.getRange(a.row + 1 + rows, a.col, old - rows, n + 1).setBackgroundColor('#FFFFFF'); });
     applying(function () {
-      source.columns.forEach(function (c, i) {
-        var range = sheet.getRange(a.row + 1, a.col + i, rows, 1);
-        range.setBackgroundColor(c.editable ? '#FFFFFF' : EDIT_COLORS.locked);
-        range.setFontColor(c.editable ? '#000000' : EDIT_COLORS.lockedText);
-        // Number formats also cover the empty rows below, so new rows look like the loaded ones.
-        if (NUMBER_FORMATS[c.type]) { try { range.setNumberFormat(NUMBER_FORMATS[c.type]); } catch (e) { /* optional */ } }
-        if (includeHeader) sheet.getRange(a.row, a.col + i, 1, 1).setBackgroundColor(c.editable ? XL.head : XL.lockedHead);
+      // Number formats also cover the empty line at the bottom, so new rows look like the loaded ones.
+      paintRows(source, sheet, a.row + 1, rows);
+      if (includeHeader) source.columns.forEach(function (c, i) {
+        sheet.getRange(a.row, a.col + i, 1, 1).setBackgroundColor(c.editable ? XL.head : XL.lockedHead);
       });
-      sheet.getRange(a.row + 1, a.col + n, rows, 1).setBackgroundColor('#FFFFFF');
       if (includeHeader) {
         var sh = sheet.getRange(a.row, a.col + n, 1, 1);
         sh.setBackgroundColor(XL.statusHead);
@@ -1615,7 +1611,12 @@
     markChanges(source, sheet, changes);
     var real = changes.filter(function (x) { return x.op === 'modify' || x.op === 'insert'; });
     // The region grew (a new row typed) or shrank: move the dropdowns with it.
-    if (source._lkRows && lk.cache[source.tableNo] && lookupRows(source) !== source._lkRows) scheduleLookups(source);
+    if (source._lkRows && lk.cache[source.tableNo]) {
+      var lr = lookupRows(source);
+      // One rule per column (or per run of one type) keeps the saved workbook small, so the box is
+      // re-covered as a whole, batched a moment after typing.
+      if (lr !== source._lkRows) scheduleLookups(source);
+    }
     source.changeCount = real.length;
     updateWriteButton();
     return real;
@@ -1639,53 +1640,113 @@
 
   function growRegionBox(source, sheet) {
     if (!source.styledArea || !source.editable || !source.columns) return;
-    var want = boxRows(source);
-    if (want === source.styledArea.rows) return;
+    var want = boxRows(source), old = source.styledArea.rows, cols = source.styledArea.cols;
+    if (want === old) return;
+    var a = anchorOf(source), api = state.api, n = source.dataCols;
     applying(function () {
-      styleRegion(source, sheet, want, source.styledArea.cols);
+      // Border only (header, banding and widths stay as they are).
+      try {
+        sheet.getRange(a.row, a.col, Math.max(old, want) + 1, cols + 1).setBorder(api.Enum.BorderType.NONE, api.Enum.BorderStyleTypes.NONE);
+        sheet.getRange(a.row, a.col, want, cols).setBorder(api.Enum.BorderType.OUTSIDE, api.Enum.BorderStyleTypes.THIN, XL.border);
+      } catch (e) { /* borders optional */ }
+      source.styledArea = { rows: want, cols: cols };
       // The sheet's filter buttons belong to this region: keep the filter range equal to the box.
       try {
-        var a = anchorOf(source), f = sheet.getFilter && sheet.getFilter(), fr = f && f.getRange();
+        var f = sheet.getFilter && sheet.getFilter(), fr = f && f.getRange();
         if (f && fr && fr.getRow() === a.row && fr.getColumn() === a.col && fr.getHeight() !== Math.max(want, 2)) {
-          var cols = fr.getWidth();
+          var fw = fr.getWidth();
           f.remove();
-          sheet.getRange(a.row, a.col, Math.max(want, 2), cols).createFilter();
+          sheet.getRange(a.row, a.col, Math.max(want, 2), fw).createFilter();
         }
       } catch (e) { /* filter optional */ }
+      // Paint only the rows that joined (or left) the box.
+      if (want > old) paintRows(source, sheet, a.row + old, want - old);
+      else sheet.getRange(a.row + want, a.col, old - want, n + 1).setBackgroundColor('#FFFFFF');
     });
-    paintBase(source, false);
+    source.paintedRows = want - 1;
   }
 
+  /** Base look of region rows: locked columns grey, editable white, number formats; one call per run of alike columns. */
+  function paintRows(source, sheet, firstRow, count) {
+    var a = anchorOf(source), n = source.dataCols, cols = source.columns;
+    var i = 0;
+    while (i < n) {
+      var j = i;
+      while (j + 1 < n && !!cols[j + 1].editable === !!cols[i].editable) j++;
+      var r = sheet.getRange(firstRow, a.col + i, count, j - i + 1);
+      r.setBackgroundColor(cols[i].editable ? '#FFFFFF' : EDIT_COLORS.locked);
+      r.setFontColor(cols[i].editable ? '#000000' : EDIT_COLORS.lockedText);
+      i = j + 1;
+    }
+    i = 0;
+    while (i < n) {
+      var fmt = NUMBER_FORMATS[cols[i].type], k = i;
+      while (k + 1 < n && NUMBER_FORMATS[cols[k + 1].type] === fmt) k++;
+      if (fmt) { try { sheet.getRange(firstRow, a.col + i, count, k - i + 1).setNumberFormat(fmt); } catch (e) { /* optional */ } }
+      i = k + 1;
+    }
+    sheet.getRange(firstRow, a.col + n, count, 1).setBackgroundColor('#FFFFFF');
+  }
+
+
+  /**
+   * Colours changed / new cells and writes the BC Status text. Only the difference to the last call is
+   * painted: cells that stay changed are not touched again, a whole new row is coloured with one call, and
+   * a status cell is written only when its text changes. (Repainting everything on every keystroke made
+   * typing and saving slow on regions with many pending rows.)
+   */
   function markChanges(source, sheet, changes) {
     var a = anchorOf(source), n = source.dataCols;
-    applying(function () {
-      (source.marks || []).forEach(function (m) {
-        var c = source.columns[m.ci];
-        if (c) sheet.getRange(m.r, a.col + m.ci, 1, 1).setBackgroundColor(c.editable ? '#FFFFFF' : EDIT_COLORS.locked);
-      });
-      source.marks = [];
-      changes.forEach(function (x) {
-        var cell = sheet.getRange(x.r, a.col + n, 1, 1);
-        if (x.op === 'clear') { cell.setValue(''); return; }
-        if (x.op === 'blocked') {
-          cell.setValue('Not saved: new records are not allowed for this table');
-          cell.setFontColor('#A4262C');
-          return;
-        }
-        if (source.marks.length > 3000) return;
-        var color = x.op === 'insert' ? EDIT_COLORS.added : EDIT_COLORS.changed;
-        var cols = x.op === 'insert' ? source.columns.map(function (c, i) { return i; }) : x.cols;
-        cols.forEach(function (ci) {
-          sheet.getRange(x.r, a.col + ci, 1, 1).setBackgroundColor(color);
-          source.marks.push({ r: x.r, ci: ci });
-        });
-        if (!x.status || x.status === STATUS_CHANGED || x.status === STATUS_NEW || /^Saved/.test(String(x.status))) {
-          cell.setValue(x.op === 'insert' ? STATUS_NEW : STATUS_CHANGED);
-          cell.setFontColor(x.op === 'insert' ? '#0E700E' : '#835B00');
-        }
-      });
+    var want = {}, rows = {}, statusTo = {};
+    changes.forEach(function (x) {
+      if (x.op === 'clear') { statusTo[x.r] = { text: '' }; return; }
+      if (x.op === 'blocked') { statusTo[x.r] = { text: 'Not saved: new records are not allowed for this table', color: '#A4262C' }; return; }
+      var color = x.op === 'insert' ? EDIT_COLORS.added : EDIT_COLORS.changed;
+      if (x.op === 'insert') rows[x.r] = color;
+      else x.cols.forEach(function (ci) { want[x.r + ':' + ci] = color; });
+      if (!x.status || x.status === STATUS_CHANGED || x.status === STATUS_NEW || /^Saved/.test(String(x.status))) {
+        statusTo[x.r] = x.op === 'insert' ? { text: STATUS_NEW, color: '#0E700E' } : { text: STATUS_CHANGED, color: '#835B00' };
+      }
     });
+    Object.keys(rows).forEach(function (r) { for (var ci = 0; ci < n; ci++) want[r + ':' + ci] = rows[r]; });
+    var had = {};
+    (source.marks || []).forEach(function (m) { had[m.r + ':' + m.ci] = m.color || ''; });
+    applying(function () {
+      // Cells no longer changed: back to the base colour.
+      Object.keys(had).forEach(function (k) {
+        if (want[k]) return;
+        var p = k.split(':'), ci = +p[1], c = source.columns[ci];
+        if (c) sheet.getRange(+p[0], a.col + ci, 1, 1).setBackgroundColor(c.editable ? '#FFFFFF' : EDIT_COLORS.locked);
+      });
+      // New rows: one call per row when the row was not coloured yet.
+      Object.keys(rows).forEach(function (r) {
+        var fresh = false;
+        for (var ci = 0; ci < n; ci++) if (had[r + ':' + ci] !== rows[r]) { fresh = true; break; }
+        if (fresh) sheet.getRange(+r, a.col, 1, n).setBackgroundColor(rows[r]);
+      });
+      // Changed cells of existing rows that were not coloured yet.
+      Object.keys(want).forEach(function (k) {
+        var p = k.split(':');
+        if (rows[p[0]] || had[k] === want[k]) return;
+        sheet.getRange(+p[0], a.col + (+p[1]), 1, 1).setBackgroundColor(want[k]);
+      });
+      // Status texts: write only the ones that change.
+      var keys = Object.keys(statusTo).map(Number);
+      if (keys.length) {
+        var lo = Math.min.apply(null, keys), hi = Math.max.apply(null, keys);
+        var now = sheet.getRange(lo, a.col + n, hi - lo + 1, 1).getRawValues();
+        keys.forEach(function (r) {
+          var cur = now[r - lo] ? now[r - lo][0] : '', to = statusTo[r];
+          if (String(cur == null ? '' : cur) === to.text) return;
+          var cell = sheet.getRange(r, a.col + n, 1, 1);
+          cell.setValue(to.text);
+          if (to.color) cell.setFontColor(to.color);
+        });
+      }
+    });
+    source.marks = Object.keys(want).slice(0, 3000).map(function (k) { var p = k.split(':'); return { r: +p[0], ci: +p[1], color: want[k] }; });
   }
+
 
   function updateWriteButton() {
     if (!ui.write) return;
@@ -1763,11 +1824,11 @@
         if (!ok) return;
         setBusy(true);
         setProgress(-1);
-        var totals = { saved: 0, failed: 0 };
+        var totals = { saved: 0, failed: 0, bcMs: 0 }, started = Date.now();
         var chain = Promise.resolve();
         work.forEach(function (w) {
           chain = chain.then(function () { return w.budget ? writeBudget(w.source, w.changes) : writeSource(w.source, w.changes); })
-            .then(function (r) { totals.saved += r.saved; totals.failed += r.failed; });
+            .then(function (r) { totals.saved += r.saved; totals.failed += r.failed; totals.bcMs += r.bcMs || 0; });
         });
         return chain.then(function () {
           setBusy(false);
@@ -1777,8 +1838,10 @@
             else H.toast('success', 'Saved ' + totals.saved + ' budget ' + (totals.saved === 1 ? unit[0] : unit[1]) + ' to Business Central.');
             return;
           }
-          if (totals.failed) H.toast('warning', 'Saved ' + totals.saved + (totals.saved === 1 ? ' row' : ' rows') + '. ' + totals.failed + (totals.failed === 1 ? ' row has' : ' rows have') + ' an error: see the BC Status column.');
-          else H.toast('success', 'Saved ' + totals.saved + (totals.saved === 1 ? ' row' : ' rows') + ' to Business Central.');
+          // How long it took, and how much of it was BC itself: helps to see where a slow save comes from.
+          var took = ' (' + secs(Date.now() - started) + (totals.bcMs ? ', BC ' + secs(totals.bcMs) : '') + ')';
+          if (totals.failed) H.toast('warning', 'Saved ' + totals.saved + (totals.saved === 1 ? ' row' : ' rows') + '. ' + totals.failed + (totals.failed === 1 ? ' row has' : ' rows have') + ' an error: see the BC Status column.' + took);
+          else H.toast('success', 'Saved ' + totals.saved + (totals.saved === 1 ? ' row' : ' rows') + ' to Business Central' + took + '.');
         }, function (e) { setBusy(false); reportError(e); });
       });
   }
@@ -1871,8 +1934,10 @@
     setDirty(true);
     diffSource(source);
     updateRegionBar(); renderSources(); renderBarSources();
-    w.resolve({ saved: res.saved || 0, failed: res.failed || 0 });
+    w.resolve({ saved: res.saved || 0, failed: res.failed || 0, bcMs: res.ms || 0 });
   }
+
+  function secs(ms) { return (ms / 1000).toFixed(1) + ' s'; }
 
   /** Before a refresh replaces an editable region: ask when it still has unsaved BC changes. */
   function confirmDiscard(sources) {
@@ -2855,7 +2920,9 @@
 
   function listValues(resp, key) {
     var list = key && resp.lists && resp.lists[key];
-    return list ? list.values.map(function (v) { return v[0]; }) : null;
+    if (!list) return null;
+    if (!list._codes) list._codes = list.values.map(function (v) { return v[0]; });
+    return list._codes;
   }
 
   function setList(range, values) {
@@ -2867,20 +2934,28 @@
     } catch (e) { /* dropdowns optional */ }
   }
 
-  function applyLookups(source) {
+  /**
+   * Sets the dropdowns. part = { from, count } (rows under the header) sets only those rows: used when the
+   * box grows by a row or a type cell changes, so typing stays fast. Without part, the whole box.
+   */
+  function applyLookups(source, part) {
     var hit = lk.cache[source.tableNo], sheet = workbook() && workbook().getSheetBySheetId(source.sheetId);
     if (!hit || !sheet || !isTracking(source)) return;
     var resp = hit.resp, a = anchorOf(source), rows = lookupRows(source);
+    var from = part ? Math.max(0, part.from) : 0, count = part ? Math.min(part.count, rows - from) : rows;
+    if (count <= 0) return;
     source.lookupTypeCols = [];
     source.lookupCount = 0;
     applying(function () {
-      clearLookupsBelow(source, sheet, rows);
-      source._lkRows = rows;
-      // Columns whose Dropdown tick is off in the region panel: no list.
-      (source.noList || []).forEach(function (no) {
-        var ci = colIndex(source, no);
-        if (ci >= 0) setList(sheet.getRange(a.row + 1, a.col + ci, rows, 1), null);
-      });
+      if (!part) {
+        clearLookupsBelow(source, sheet, rows);
+        // Columns whose Dropdown tick is off in the region panel: no list.
+        (source.noList || []).forEach(function (no) {
+          var ci = colIndex(source, no);
+          if (ci >= 0) setList(sheet.getRange(a.row + 1, a.col + ci, rows, 1), null);
+        });
+      }
+      source._lkRows = part ? Math.max(source._lkRows || 0, from + count) : rows;
       (resp.lookups || []).forEach(function (l) {
         if ((source.noList || []).indexOf(l.field) >= 0) return;
         var ci = colIndex(source, l.field);
@@ -2890,16 +2965,16 @@
           var ti = colIndex(source, l.typeField);
           if (ti < 0) return;
           source.lookupTypeCols.push(ti);
-          var types = sheet.getRange(a.row + 1, a.col + ti, rows, 1).getDisplayValues().map(function (r) { return String(r[0] == null ? '' : r[0]).trim(); });
+          var types = sheet.getRange(a.row + 1 + from, a.col + ti, count, 1).getDisplayValues().map(function (r) { return String(r[0] == null ? '' : r[0]).trim(); });
           var start = 0;
-          for (var i = 1; i <= rows; i++) {
-            if (i === rows || types[i] !== types[start]) {
-              setList(sheet.getRange(a.row + 1 + start, a.col + ci, i - start, 1), listValues(resp, l.map[types[start] || l.blankType]));
+          for (var i = 1; i <= count; i++) {
+            if (i === count || types[i] !== types[start]) {
+              setList(sheet.getRange(a.row + 1 + from + start, a.col + ci, i - start, 1), listValues(resp, l.map[types[start] || l.blankType]));
               start = i;
             }
           }
         } else {
-          setList(sheet.getRange(a.row + 1, a.col + ci, rows, 1), l.values || listValues(resp, l.list));
+          setList(sheet.getRange(a.row + 1 + from, a.col + ci, count, 1), l.values || listValues(resp, l.list));
         }
         source.lookupCount++;
       });
@@ -2908,7 +2983,7 @@
 
   function scheduleLookups(source) {
     clearTimeout(source._lkTimer);
-    source._lkTimer = setTimeout(guard(function () { applyLookups(source); }), 300);
+    source._lkTimer = setTimeout(guard(function () { applyLookups(source); }), 200);
   }
 
   // =====================================================================================
