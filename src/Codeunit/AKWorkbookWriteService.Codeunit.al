@@ -148,6 +148,15 @@ codeunit 89002 "AK Workbook Write Service"
     procedure ApplyChanges(RequestJson: Text): Text
     var
         WriteRow: Codeunit "AK Workbook Write Row";
+        WriteBatch: Codeunit "AK Workbook Write Batch";
+        ResultToken: JsonToken;
+        BatchResults: JsonArray;
+        Total: Integer;
+        BatchStart: Integer;
+        BatchEnd: Integer;
+        Index: Integer;
+        BatchDone: Boolean;
+        AccessChecked: Boolean;
         Request: JsonObject;
         Response: JsonObject;
         Results: JsonArray;
@@ -173,19 +182,48 @@ codeunit 89002 "AK Workbook Write Service"
             Error(TooManyChangesErr, MaxRowsPerSave());
 
         CheckCanModify(TableNo);
+        // Checked once here: rows in a batch skip the per-row check. Without insert rights, inserts are
+        // written row by row so each new row reports the reason.
+        AccessChecked := (not HasInserts(ChangesToken.AsArray())) or CanInsert(TableNo);
 
-        foreach ChangeToken in ChangesToken.AsArray() do begin
-            Clear(WriteRow);
-            WriteRow.SetChange(TableNo, FieldNos, KeyFieldNos, ChangeToken.AsObject());
-            ClearLastError();
-            if WriteRow.Run() then begin
-                Commit();
-                Results.Add(WriteRow.GetResult());
-                Saved += 1;
-            end else begin
-                Results.Add(BuildErrorResult(ChangeToken.AsObject()));
-                Failed += 1;
+        // Batches of BatchSize() rows: one transaction and one commit per batch. A batch with any error is
+        // rolled back and written again row by row, so good rows are saved and each bad row shows its error.
+        Total := ChangesToken.AsArray().Count();
+        BatchStart := 0;
+        while BatchStart < Total do begin
+            BatchEnd := BatchStart + BatchSize() - 1;
+            if BatchEnd > Total - 1 then
+                BatchEnd := Total - 1;
+            BatchDone := false;
+            if AccessChecked and (BatchEnd > BatchStart) then begin
+                Clear(WriteBatch);
+                WriteBatch.SetBatch(TableNo, FieldNos, KeyFieldNos, ChangesToken.AsArray(), BatchStart, BatchEnd, true);
+                ClearLastError();
+                if WriteBatch.Run() then begin
+                    Commit();
+                    BatchResults := WriteBatch.GetResults();
+                    foreach ResultToken in BatchResults do
+                        Results.Add(ResultToken);
+                    Saved += BatchEnd - BatchStart + 1;
+                    BatchDone := true;
+                end;
             end;
+            if not BatchDone then
+                for Index := BatchStart to BatchEnd do begin
+                    ChangesToken.AsArray().Get(Index, ChangeToken);
+                    Clear(WriteRow);
+                    WriteRow.SetChange(TableNo, FieldNos, KeyFieldNos, ChangeToken.AsObject());
+                    ClearLastError();
+                    if WriteRow.Run() then begin
+                        Commit();
+                        Results.Add(WriteRow.GetResult());
+                        Saved += 1;
+                    end else begin
+                        Results.Add(BuildErrorResult(ChangeToken.AsObject()));
+                        Failed += 1;
+                    end;
+                end;
+            BatchStart := BatchEnd + 1;
         end;
 
         Response.Add('requestId', GetText(Request, 'requestId'));
@@ -201,6 +239,24 @@ codeunit 89002 "AK Workbook Write Service"
         Session.LogMessage('AK0002', StrSubstNo('Workbook write-back: table %1, %2 saved, %3 failed.', TableNo, Saved, Failed),
             Verbosity::Normal, DataClassification::SystemMetadata, TelemetryScope::ExtensionPublisher, 'Category', 'AK Excel Workbook');
         exit(Result);
+    end;
+
+    /// <summary>Rows written in one transaction (and one commit), as in the "commit every 100 records" pattern.</summary>
+    procedure BatchSize(): Integer
+    begin
+        exit(100);
+    end;
+
+    local procedure HasInserts(Changes: JsonArray): Boolean
+    var
+        ChangeToken: JsonToken;
+        Token: JsonToken;
+    begin
+        foreach ChangeToken in Changes do
+            if ChangeToken.AsObject().Get('op', Token) then
+                if Token.AsValue().AsText() = 'insert' then
+                    exit(true);
+        exit(false);
     end;
 
     local procedure BuildErrorResult(Change: JsonObject): JsonObject

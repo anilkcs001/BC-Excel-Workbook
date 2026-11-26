@@ -1,19 +1,27 @@
 codeunit 89003 "AK Workbook Write Row"
 {
-    // Writes ONE changed or new sheet row to its table. Called with WriteRow.Run() by
-    // "AK Workbook Write Service", so an error here rolls back only this row.
+    // Writes ONE changed or new sheet row to its table. "AK Workbook Write Service" first writes rows in
+    // batches of 100 through "AK Workbook Write Batch" (one transaction, one commit); only when a batch fails
+    // it writes that batch row by row with WriteRow.Run(), so an error rolls back only its own row.
     //
     // Modify: find the record by its primary key, stop if someone changed it after the sheet was loaded
     //         (SystemModifiedAt), Validate each changed field in sheet order, then Modify(true).
     // Insert: Init, Validate the key fields that were typed, give line tables the next Line No. and
-    //         journal lines the page's SetUpNewLine defaults, Insert(true) (number series and OnInsert run),
-    //         then Validate the other fields and Modify(true).
+    //         journal lines the page's SetUpNewLine defaults. Journal and document lines: Validate the other
+    //         fields, then Insert(true), like their DelayedInsert pages. Other tables: Insert(true) (number
+    //         series and OnInsert run), then Validate the other fields and Modify(true).
     // Validate runs the same OnValidate code as the standard page, so lookups, blocked checks and
     // dependent fields behave the same way.
 
     Access = Internal;
 
     trigger OnRun()
+    begin
+        Execute();
+    end;
+
+    /// <summary>Writes the row. Called through Run() for one isolated row, or directly by "AK Workbook Write Batch".</summary>
+    procedure Execute()
     begin
         case Operation of
             'modify':
@@ -37,6 +45,7 @@ codeunit 89003 "AK Workbook Write Row"
         TableNo: Integer;
         RowNo: Integer;
         Operation: Text;
+        AccessChecked: Boolean;
         UnknownOperationErr: Label 'Unknown change type "%1".', Comment = '%1 = operation';
         RecordGoneErr: Label 'This record no longer exists in Business Central. Refresh the sheet.';
         ChangedByOtherErr: Label 'This record was changed in Business Central after you loaded the sheet. Refresh the sheet and enter your change again.';
@@ -60,6 +69,12 @@ codeunit 89003 "AK Workbook Write Row"
             Operation := Token.AsValue().AsText();
     end;
 
+    /// <summary>The caller already checked the allow-list and permissions for this table; skip the per-row check.</summary>
+    procedure SetAccessChecked(NewAccessChecked: Boolean)
+    begin
+        AccessChecked := NewAccessChecked;
+    end;
+
     procedure GetResult(): JsonObject
     begin
         exit(ResultJson);
@@ -71,7 +86,8 @@ codeunit 89003 "AK Workbook Write Row"
         Index: Integer;
         FldRef: FieldRef;
     begin
-        WriteService.CheckCanModify(TableNo);
+        if not AccessChecked then
+            WriteService.CheckCanModify(TableNo);
         RecRef.Open(TableNo);
         ReadTextArray('key', KeyValues);
         for Index := 1 to KeyFieldNos.Count() do begin
@@ -94,7 +110,8 @@ codeunit 89003 "AK Workbook Write Row"
         Index: Integer;
         FldRef: FieldRef;
     begin
-        WriteService.CheckCanInsert(TableNo);
+        if not AccessChecked then
+            WriteService.CheckCanInsert(TableNo);
         RecRef.Open(TableNo);
         RecRef.Init();
         ReadTextArray('key', KeyValues);
@@ -106,9 +123,22 @@ codeunit 89003 "AK Workbook Write Row"
                 end;
         SetNextLineNo(KeyValues);
         SetUpNewLine();
-        RecRef.Insert(true);
-        ValidateValues(true);
-        RecRef.Modify(true);
+        if IsDelayedInsertTable() then begin
+            // Journal and document lines: like their pages (DelayedInsert), fill and validate the line first,
+            // then insert it once. One write instead of Insert + Modify.
+            ValidateValues(true);
+            RecRef.Insert(true);
+        end else begin
+            RecRef.Insert(true);
+            ValidateValues(true);
+            RecRef.Modify(true);
+        end;
+    end;
+
+    /// <summary>Tables whose standard pages insert the line only after it is filled in (DelayedInsert = true).</summary>
+    local procedure IsDelayedInsertTable(): Boolean
+    begin
+        exit(TableNo in [Database::"Gen. Journal Line", Database::"Item Journal Line", Database::"Sales Line", Database::"Purchase Line"]);
     end;
 
     /// <summary>
