@@ -1,0 +1,13 @@
+{
+  "al.enableCodeAnalysis": true,
+  "al.codeAnalyzers": [
+    "${CodeCop}",
+    "${UICop}",
+    "${AppSourceCop}"
+  ],
+  "al.ruleSetPath": "./AK.ruleset.json",
+  "al.backgroundCodeAnalysis": "Project",
+  "al.compilationOptions": {
+    "generateReportLayout": false
+  }
+}

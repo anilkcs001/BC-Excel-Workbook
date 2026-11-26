@@ -7,8 +7,8 @@
   "description": "Embeds a full spreadsheet (formulas, formatting, filters, sort, conditional formatting, find/replace, data validation) in Business Central. Users pull data from any table they have permission to read, refresh it later, save workbooks and import/export .xlsx files.",
   "privacyStatement": "",
   "EULA": "",
-  "help": "",
-  "url": "",
+  "help": "https://github.com/anilkcs001/BC-Excel-Workbook#readme",
+  "url": "https://anilkcs001.github.io",
   "logo": "",
   "dependencies": [],
   "screenshots": [],
@@ -30,5 +30,6 @@
   "features": [
     "NoImplicitWith",
     "TranslationFile"
-  ]
+  ],
+  "contextSensitiveHelpUrl": "https://github.com/anilkcs001/BC-Excel-Workbook#readme"
 }
