@@ -871,3 +871,5 @@ html, body, #controlAddIn, .ak-host {
 .ak-picker__prev { display: block; height: 140px; overflow: hidden; pointer-events: none; }
 .ak-picker__prev .ak-xkpi { height: 140px; }
 .ak-picker__name { font-size: 12.5px; font-weight: 600; color: var(--ak-text); padding: 6px 2px 0; }
+
+.ak-rtag--warn { color: #8a4b00; background: #fff4ce; border-color: #f2d58a; }
