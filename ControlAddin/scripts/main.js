@@ -402,7 +402,7 @@
       row.classList.toggle('has-filter', !!fs.filter);
       updateLoadState();
     });
-    ui.loadBtn.addEventListener('click', loadFromPanel);
+    ui.loadBtn.addEventListener('click', function () { loadFromPanel(false); });
     ui.edit.addEventListener('change', function () { renderFields(); updateLoadState(); });
     ui.regionbar.addEventListener('change', function (e) {
       if (e.target.hasAttribute('data-region-edit') && activeRegion()) setRegionEditing(activeRegion(), e.target.checked);
@@ -795,9 +795,10 @@
       : fields.length + ' fields' + (filters ? ' · ' + filters + (filters === 1 ? ' filter' : ' filters') : ' · no filters');
   }
 
-  function loadFromPanel() {
+  function loadFromPanel(confirmed) {
     var fields = selectedFields();
     if (!state.table || !fields.length) return;
+    if (!confirmed && !(state.regionEdit && state.sources[state.regionEdit])) { confirmNewRegion(); return; }
     var maxRows = parseInt(ui.maxRows.value, 10);
     if (!(maxRows > 0)) maxRows = state.config.defaultMaxRows;
     maxRows = Math.min(maxRows, state.config.maxRowsLimit);
@@ -857,6 +858,36 @@
     };
     if (existing) confirmDiscard([existing]).then(function (ok) { if (ok) finish(); });
     else finish();
+  }
+
+  /**
+   * Before a NEW region is placed, ask once: this stops a second click from adding the same table twice.
+   * When the workbook already has a region of the same table, offer to update that one instead.
+   */
+  function confirmNewRegion() {
+    var dest = (ui.panel.querySelector('input[name=ak-dest]:checked') || {}).value || 'here';
+    var t = state.regionAnchor || selectedCell();
+    var where = dest === 'new' ? 'a new sheet' : sheetName(t.sheetId) + '!' + cellName(t.row, t.col);
+    var same = sourceList().filter(function (o) { return o.tableNo === state.table.tableNo && !isBudget(o); });
+    // Prefer a region of the same table on the sheet the user is on.
+    same.sort(function (x, y) { return (x.sheetId === t.sheetId ? 0 : 1) - (y.sheetId === t.sheetId ? 0 : 1); });
+    var buttons = [], msg = 'Insert a new ' + state.table.tableCaption + ' region at ' + where + '?';
+    if (same.length) {
+      var o = same[0];
+      msg += ' This workbook already has ' + (same.length === 1 ? (/^[aeiou]/i.test(state.table.tableCaption) ? 'an ' : 'a ') + state.table.tableCaption + ' region at ' + regionLabel(o) : same.length + ' ' + state.table.tableCaption + ' regions (the first is at ' + regionLabel(o) + ')') +
+        '. "Update existing" loads the fields and filters from this panel into that region instead.';
+      buttons.push({ label: 'Update existing', value: 'update' });
+    }
+    buttons.push({ label: 'Insert new region', value: 'insert', primary: true });
+    H.choose(msg, buttons, 'Insert region').then(guard(function (v) {
+      if (v === 'insert') loadFromPanel(true);
+      if (v === 'update') {
+        state.regionEdit = same[0].id;
+        state.regionAnchor = { sheetId: same[0].sheetId, row: anchorOf(same[0]).row, col: anchorOf(same[0]).col };
+        renderRegionTarget();
+        loadFromPanel(true);
+      }
+    }));
   }
 
   /** Requests data for a source and writes it to its sheet. Resolves with {loaded,total,truncated}. */
@@ -1571,6 +1602,7 @@
     }
     source.posKeys = posKeys;
     source._end = end;
+    growRegionBox(source, sheet);
     markChanges(source, sheet, changes);
     var real = changes.filter(function (x) { return x.op === 'modify' || x.op === 'insert'; });
     // The region grew (a new row typed) or shrank: move the dropdowns with it.
@@ -1578,6 +1610,18 @@
     source.changeCount = real.length;
     updateWriteButton();
     return real;
+  }
+
+  /**
+   * The blue box is the region. When a new row is typed on the line under an editable region, the box
+   * (border) grows to take it in, and shrinks back when that row is cleared. It never reaches into another
+   * region below, because diffSource only reads rows up to roomBelow().
+   */
+  function growRegionBox(source, sheet) {
+    if (!source.styledArea || !source.editable) return;
+    var a = anchorOf(source), want = Math.max(regionEndRow(source) - a.row + 1, source.lastRows || 1);
+    if (want === source.styledArea.rows) return;
+    applying(function () { styleRegion(source, sheet, want, source.styledArea.cols); });
   }
 
   function markChanges(source, sheet, changes) {
@@ -2588,7 +2632,12 @@
     }
     var row = sheet.getRange(cell.row, a.col, 1, fields.length).getRawValues()[0];
     var key = keyIdx.map(function (i) { return toBC(fields[i].type, row[i]); });
-    if (key.some(function (v) { return v === ''; }) && !s.editable) { H.toast('info', 'This row has no key values, so there is no record to open.'); return; }
+    if (key.some(function (v) { return v === ''; })) {
+      H.toast('info', s.editable && cell.row > anchorOf(s).row + (s.rowCount || 0)
+        ? 'This is a new row. Save it to BC first, then Ctrl+click opens it.'
+        : 'This row has no key values, so there is no record to open.');
+      return;
+    }
     sendDrill({ kind: 'record', tableNo: s.tableNo, keyFields: keyIdx.map(function (i) { return fields[i].no; }), key: key });
   }
 
