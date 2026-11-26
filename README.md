@@ -222,6 +222,7 @@ No Azure services, no external API calls, no CDN at runtime. All scripts ship in
 
 | Version | Date | Change |
 |---|---|---|
+| 2.2.4.0 | 2026-11-26 | Region bar shows **New rows off** when the table does not allow inserts (Edit Tables > Allow Insert, or no insert permission). The add-in version is shown on the logo tooltip. |
 | 2.2.3.0 | 2026-11-26 | The box always ends with an empty line for a new row and grows when that line is used; dropdowns, formats and the filter range follow the box. *Dropdown* tick per field in the region panel. |
 | 2.2.2.0 | 2026-11-26 | *Insert region* asks before placing a new region and offers *Update existing* when the same table already has a region. The region box grows with new rows typed under an editable region (up to the next region). Clear message when Ctrl+clicking a new, unsaved row. |
 | 2.2.1.0 | 2026-11-26 | Dropdowns stay inside the region (rows + the new-row line) and grow with it; dropdowns left below a region by 2.2.0.0 are cleared. |

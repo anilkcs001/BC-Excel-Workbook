@@ -21,6 +21,7 @@
   var MUTATION = 2; // Univer CommandType.MUTATION
   var NUMERIC_TYPES = { Decimal: 1, Integer: 1, BigInteger: 1, Number: 1 };
 
+  var ADDIN_VERSION = '2.2.4.0';  // shown on the logo tooltip, so testers can see which script BC loaded
   var state = {
     config: { defaultMaxRows: 10000, maxRowsLimit: 100000, chunkSize: 400000, workbookCode: '', description: '' },
     univer: null,
@@ -66,7 +67,7 @@
       '    <div class="ak-bar__brand">' +
       '      <label class="ak-autosave" title="Save automatically about 30 seconds after a change">' +
       '        <input type="checkbox" id="ak-autosave"><span class="ak-switch" aria-hidden="true"></span><span>AutoSave</span></label>' +
-      '      <span class="ak-bar__logo">' + H.icon('sheet') + '</span>' +
+      '      <span class="ak-bar__logo" title="AK Excel Workbook, add-in ' + ADDIN_VERSION + '">' + H.icon('sheet') + '</span>' +
       '      <div class="ak-bar__names">' +
       '        <input class="ak-title" id="ak-title" maxlength="100" placeholder="Untitled workbook" aria-label="Workbook name" spellcheck="false">' +
       '        <span class="ak-bar__code" id="ak-code"></span>' +
@@ -1902,6 +1903,10 @@
       '<span class="ak-rbar__meta">' + H.escapeHtml(regionLabel(s)) + ' &middot; ' + H.formatInt(s.rowCount || 0) + (isBudget(s) ? ' accounts &middot; ' + (s.budget.periods) + ' ' + (s.budget.periodType === 'quarter' ? 'quarters' : 'months') : (s.rowCount === 1 ? ' row' : ' rows')) +
       (s.filters && s.filters.length ? ' &middot; ' + s.filters.length + (s.filters.length === 1 ? ' filter' : ' filters') : '') + '</span>' +
       refs + editSwitch +
+      // Editable but new rows not allowed: say so, otherwise the box has no empty line and does not grow.
+      (s.editable && !isBudget(s) && !s.canInsert
+        ? '<span class="ak-rtag ak-rtag--warn" title="To add new rows, an admin ticks Allow Insert for this table on the Edit Tables page, and you need insert permission on it">New rows off</span>'
+        : '') +
       '<span class="ak-rbar__sp"></span>' +
       '<span class="ak-rbar__hint" title="Ctrl+click a row or amount to open it in Business Central">Ctrl+click to open in BC</span>' +
       '<button class="ak-btn ak-btn--subtle ak-btn--sm" data-act="region-select" title="Select the whole region (header and rows). Click again to select only the data rows.">' + H.icon('table') + '<span>Select</span></button>' +
